@@ -334,8 +334,50 @@ static void test_choose(void) {
     cleanup(other);
 }
 
+/* Two games with their updates and add-ons mixed in one folder, in any order: each update
+ * and add-on goes with the game of its own title ID, never with the other one, and an
+ * update of the other region (another title ID) is not used for either. */
+static void test_no_mixing(void) {
+    printf("catalog: two games and their updates in one folder stay apart\n");
+    char root[] = "/tmp/ps4mount-mix-XXXXXX";
+    if (!mkdtemp(root)) {
+        CHECK(0);
+        return;
+    }
+    pkg_at(root, "PS4Mount/all/a-update.pkg", "UP1004-CUSA00419_00-GTAVDIGITALDOWNL", "gp", 1, 0x4000, 0x4000, "01.70");
+    pkg_at(root, "PS4Mount/all/b-game.pkg", "EP9000-CUSA07408_00-00000000GODOFWAR", "gd", 1, 0x4000, 0x4000, "01.00");
+    pkg_at(root, "PS4Mount/all/c-update.pkg", "EP9000-CUSA07408_00-00000000GODOFWAR", "gp", 1, 0x4000, 0x4000, "01.35");
+    pkg_at(root, "PS4Mount/all/d-game.pkg", "EP1004-CUSA00411_00-GTAVDIGITALDOWNL", "gd", 1, 0x4000, 0x4000, "01.00");
+    pkg_at(root, "PS4Mount/all/e-update.pkg", "EP1004-CUSA00411_00-GTAVDIGITALDOWNL", "gp", 1, 0x4000, 0x4000, "01.68");
+    pkg_at(root, "PS4Mount/all/f-dlc.pkg", "EP9000-CUSA07408_00-GOWDLCARMOR00001", "ac", 1, 0x4000, 0x4000, "01.00");
+    catalog_t c = {0};
+    CHECK(catalog_walk(&c, root, NULL, NULL, NULL, 0) == 6);
+    CHECK(catalog_read(&c) == 6);
+    catalog_group(&c, NULL);
+    const cat_game_t *gta = catalog_game(&c, "CUSA00411"), *gow = catalog_game(&c, "CUSA07408");
+    CHECK(gta != NULL && gow != NULL);
+    if (gta && gow) {
+        const cat_pkg_t *pg = catalog_patch(&c, &c, gta), *pw = catalog_patch(&c, &c, gow);
+        CHECK(pg != NULL && !strcmp(pg->title_id, "CUSA00411") && !strcmp(pg->app_ver, "01.68"));
+        CHECK(pw != NULL && !strcmp(pw->title_id, "CUSA07408") && !strcmp(pw->app_ver, "01.35"));
+        CHECK(gta->ndlc == 0 && gow->ndlc == 1);
+        CHECK(gow->ndlc == 1 && !strcmp(c.pkgs[gow->dlc[0]].title_id, "CUSA07408"));
+        for (int i = 0; i < gta->nupdates; i++)
+            CHECK(!strcmp(c.pkgs[gta->updates[i]].title_id, "CUSA00411")); /* not the other region's */
+    }
+    /* the other region's update has no game here: it waits, used by neither */
+    CHECK(catalog_game(&c, "CUSA00419") == NULL);
+    int nogame = 0;
+    for (int i = 0; i < c.npkgs; i++)
+        nogame += !strcmp(c.pkgs[i].title_id, "CUSA00419") && c.pkgs[i].role == CAT_ROLE_NOGAME;
+    CHECK(nogame == 1);
+    catalog_free(&c);
+    cleanup(root);
+}
+
 int main(void) {
     test_scan();
+    test_no_mixing();
     test_skip_dir();
     test_choose();
     printf("%d checks, %d failed\n", g_checks, g_failed);

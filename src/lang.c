@@ -7,7 +7,7 @@
 
 int g_lang = LANG_EN;
 
-static const char *const k_tags[LANG_COUNT] = {"en", "es"};
+static const char *const k_tags[LANG_COUNT] = {"en", "es", "tr"};
 
 const char *lang_pick(const char *const *texts, size_t n) {
     return g_lang >= 0 && (size_t)g_lang < n && texts[g_lang] ? texts[g_lang] : texts[0];
@@ -22,4 +22,8 @@ int lang_from_tag(const char *tag) {
     return -1;
 }
 
-int lang_from_console(int code) { return code == 3 || code == 20 ? LANG_ES : LANG_EN; }
+int lang_from_console(int code) {
+    if (code == 3 || code == 20)
+        return LANG_ES;
+    return code == 19 ? LANG_TR : LANG_EN;
+}

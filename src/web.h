@@ -45,6 +45,13 @@ void app_dests_json(buf_t *out);
 /* /api/uploads: the state of the upload. */
 void app_uploads_json(buf_t *out);
 
+/* /api/saves?title_id=: the game's saves on the console and its copies on the USB drive. */
+void app_saves_json(const char *tid, buf_t *out);
+/* Copies the game's saves to the USB drive now; 0 when copied, msg says what happened. */
+int app_saves_backup(const char *tid, char *msg, size_t cap);
+/* Puts the copy user/stamp (from /api/saves) back on the console; 0 when done. */
+int app_saves_restore(const char *tid, const char *user, const char *stamp, char *msg, size_t cap);
+
 int web_listen(void);
 /* Serves one connection on the listening socket. */
 void web_serve(int listen_fd);

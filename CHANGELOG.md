@@ -2,6 +2,23 @@
 
 PS4Mount PS4 is a PS4-only port of [PS4Mount](https://github.com/gasb07/ps4mount) by gasb07 (PS5); its versions start again at 0.1.0. The history of the original is in its project and in this repository's git history.
 
+## 0.7.4-tr1
+
+A Turkish edition on top of 0.7.4-fix (and the NAS change after it): copies of the saves on the USB drive, the console's free space protected, and the panel and notifications in Turkish. Not tested on a console yet: back up your saves before using it.
+
+- **Saves copied to the USB drive after each session** (Settings → Saves, on by default): the games keep using their saves on the console, where rest mode (which powers the USB drive off) or a pulled-out drive cannot cut a save in half. When a PS4Mount game closes, its saves (every user's) are copied to `PS4Mount/saves/<user>/<TITLE_ID>/<date-time>/` on the game's USB drive (or the first one connected) if they changed; the newest 10 copies per game and user are kept (1 to 50). A copy is written to a `.part` folder and named only once every file arrived whole; a save that changes meanwhile fails the copy, and it is tried again.
+- **Putting a copy back** from a game's page in the panel, with the game closed: only saves the console already has, with images of the same size, are replaced (the system's save database already lists them; it is never written). The saves on the console are copied first (`…-before-restore`), so a restore can be undone the same way.
+- **Keep free on the console (GB)** (Settings, 2 GB by default, 0 to 200): add-ons, small ones too, are not installed when they would leave less than that, and the panel does not offer that space for pkgs sent or downloaded to the console's storage.
+- **Turkish**: the panel and the notifications follow a console in Turkish (language 19), or **Settings → Language → Türkçe**.
+- The panel app is downloaded from the 0.7.4-fix release (a fork's version has no release of its own with it).
+
+**Türkçe**
+
+- **Her oturumdan sonra kayıtlar USB sürücüye kopyalanır** (Ayarlar → Kayıtlar, varsayılan açık): oyunlar kayıtlarını konsolda kullanmaya devam eder; dinlenme modu ya da çıkarılan bir sürücü bir kaydı yarıda kesemez. Bir PS4Mount oyunu kapanınca kayıtları değiştiyse `PS4Mount/saves/<kullanıcı>/<TITLE_ID>/<tarih-saat>/` içine kopyalanır; oyun ve kullanıcı başına en yeni 10 kopya saklanır.
+- **Bir kopyayı geri yükleme**, oyunun panel sayfasından, oyun kapalıyken: yalnızca konsolda zaten olan ve aynı boyuttaki kayıtlar değişir; önce konsoldaki kayıtların bir kopyası alınır (`…-before-restore`), yani geri alınabilir.
+- **Konsolda boş bırakılacak alan (GB)** (varsayılan 2 GB): DLC'ler bu alanı kullanmaz.
+- **Türkçe** panel ve bildirimler.
+
 ## 0.7.4-fix
 
 Fixes on top of 0.7.4-beta.

@@ -318,7 +318,575 @@ var LANGS = {
     'Try again': 'Reintentar',
     'paste at least one link': 'pega al menos un enlace',
     'Remove this download? What it downloaded so far is deleted.': '¿Quitar esta descarga? Se borra lo que ya bajó.',
-    'Cancel the download of {0}? What it downloaded so far is deleted.': '¿Cancelar la descarga de {0}? Se borra lo que ya bajó.'
+    'Cancel the download of {0}? What it downloaded so far is deleted.': '¿Cancelar la descarga de {0}? Se borra lo que ya bajó.',
+    /* the space kept free on the console, and the saves */
+    'Keep free on the console (GB)': 'Dejar libre en la consola (GB)',
+    "Add-ons and pkgs sent to the console's storage never take this space: what is left for saves and the system. 0: no limit.":
+      'Los DLC y los pkgs enviados a la memoria de la consola nunca ocupan este espacio: queda para las partidas y el sistema. 0: sin límite.',
+    'Saves': 'Partidas guardadas',
+    'Copy the saves to the USB drive after each session': 'Copiar las partidas al USB después de cada sesión',
+    "The games keep their saves on the console, where nothing can cut a save in half (rest mode powers the USB drive off, and a drive can be pulled out). After a game closes, its saves are copied to PS4Mount/saves on the USB drive when they changed; a game's page shows the copies and puts one back.":
+      'Los juegos guardan sus partidas en la consola, donde nada puede cortar una partida a medias (el reposo apaga el USB, y un disco se puede desconectar). Al cerrar un juego, sus partidas se copian a PS4Mount/saves en el USB si cambiaron; la ficha del juego muestra las copias y devuelve una.',
+    'Copies kept per game and user': 'Copias guardadas por juego y usuario',
+    'On the console: {0} user(s), {1}': 'En la consola: {0} usuario(s), {1}',
+    'copied': 'copiadas',
+    'No saves of this game on the console yet': 'Aún no hay partidas de este juego en la consola',
+    'Copies after each session are off (Settings → Saves).': 'Las copias después de cada sesión están apagadas (Ajustes → Partidas guardadas).',
+    'No USB drive connected: copies go to one when it is.': 'No hay ningún USB conectado: las copias irán a uno cuando lo esté.',
+    'Close the game to copy its saves': 'Cierra el juego para copiar sus partidas',
+    'Copy the saves now': 'Copiar las partidas ahora',
+    'Copies on {0} (newest first):': 'Copias en {0} (la más nueva primero):',
+    '(before a restore)': '(antes de devolver otra)',
+    'user {0}': 'usuario {0}',
+    'Put back': 'Devolver',
+    'No copies on {0} yet.': 'Aún no hay copias en {0}.',
+    'Put back the saves of {0} from {1}?\n\nThe saves the console has now are copied to the USB drive first, so this can be undone. The game must be closed.':
+      '¿Devolver las partidas de {0} de la copia del {1}?\n\nAntes se copian al USB las partidas que tiene ahora la consola, así que se puede deshacer. El juego tiene que estar cerrado.',
+    'The space kept free must be a number from 0 to {0} GB': 'El espacio que se deja libre debe ser un número de 0 a {0} GB',
+    'The copies kept must be a number from 1 to {0}': 'Las copias guardadas deben ser un número de 1 a {0}'
+  },
+  tr: {
+    /* Türkçe: the same texts, in the order of the Spanish table */
+    "Search game or CUSA":
+      "Oyun ya da CUSA ara",
+    "Scan for games":
+      "Oyunları tara",
+    "Send games":
+      "Oyun gönder",
+    "Settings":
+      "Ayarlar",
+    "Log":
+      "Günlük",
+    "Stop":
+      "Durdur",
+    "Games":
+      "Oyunlar",
+    "Back":
+      "Geri",
+    "Save":
+      "Kaydet",
+    "Cancel":
+      "İptal",
+    "Close":
+      "Kapat",
+    "No PS4 games found. Put the .pkg files (game, update and add-ons) in the PS4Mount folder of a USB drive, or send them with Send games.":
+      "PS4 oyunu bulunamadı. .pkg dosyalarını (oyun, güncelleme ve DLC) bir USB sürücünün PS4Mount klasörüne koy ya da Oyun gönder ile gönder.",
+    "No PS4 games found. Put the .pkg files (game, update and add-ons) in the PS4Mount folder of a USB drive.":
+      "PS4 oyunu bulunamadı. .pkg dosyalarını (oyun, güncelleme ve DLC) bir USB sürücünün PS4Mount klasörüne koy.",
+    "Adding games":
+      "Oyun ekleme",
+    "Folders to search for pkgs (one per line, relative to each drive)":
+      "Pkg aranacak klasörler (her satıra bir tane, her sürücünün içinde)",
+    "/ is the root of the drive. The ps4 folder holds organized games, so it cannot be used here.":
+      "/ sürücünün köküdür. ps4 klasörü düzenlenmiş oyunları tutar, bu yüzden burada kullanılamaz.",
+    "/ is the root of the drive. Games are moved into the ps4 folder, so it cannot be used here.":
+      "/ sürücünün köküdür. Oyunlar ps4 klasörüne taşınır, bu yüzden burada kullanılamaz.",
+    "Add new games in groups":
+      "Yeni oyunları gruplar halinde ekle",
+    "Games per group":
+      "Grup başına oyun",
+    "Smaller groups are gentler on the system when many games are added at once.":
+      "Aynı anda çok oyun eklenirken küçük gruplar sistemi daha az yorar.",
+    "Install add-ons (DLC)":
+      "DLC'leri kur",
+    "Organize pkgs into the ps4 folder":
+      "Pkg'leri ps4 klasöründe düzenle",
+    "On (the default): the .pkg files are moved into ps4/<title ID>/ on the drive, so the console's own installer does not find them again. Off: they are used where they are, anywhere on the drive, and are not renamed or moved.":
+      "Açık (varsayılan): .pkg dosyaları sürücüde ps4/<title ID>/ içine taşınır, böylece konsolun kendi yükleyicisi onları tekrar bulmaz. Kapalı: bulundukları yerde, sürücünün herhangi bir yerinde kullanılır; adları değişmez, taşınmazlar.",
+    "Off (the default): the .pkg files are used where they are, anywhere on the drive, grouped by their title ID. They are not renamed or moved; the games PS4Mount organized before go back to where they were.":
+      "Kapalı (varsayılan): .pkg dosyaları bulundukları yerde, sürücünün herhangi bir yerinde, title ID'lerine göre gruplanarak kullanılır. Adları değişmez, taşınmazlar; PS4Mount'un daha önce düzenlediği oyunlar eski yerlerine döner.",
+    "Also use pkgs in the console's /data/PS4Mount":
+      "Konsoldaki /data/PS4Mount içindeki pkg'leri de kullan",
+    "Pkgs sent to the console's storage are added from there, with no install to wait for. They still take internal space.":
+      "Konsol belleğine gönderilen pkg'ler kurulum beklemeden oradan eklenir. Yine de iç diskte yer kaplarlar.",
+    "NAS (NFS or SMB)":
+      "NAS (NFS veya SMB)",
+    "Not available on this firmware: there is no FUSE patch for it.":
+      "Bu yazılım sürümünde yok: bunun için FUSE yaması bulunmuyor.",
+    "Experimental on this firmware: its FUSE patch is itemzflow's and was not tried with PS4Mount (it was on 13.52 and 6.72). If the console freezes when the share is mounted, restart it and turn the NAS off.":
+      "Bu yazılım sürümünde deneysel: FUSE yaması itemzflow'a ait ve PS4Mount ile denenmedi (13.52 ve 6.72'de denendi). Paylaşım bağlanınca konsol donarsa yeniden başlat ve NAS'ı kapat.",
+    "Use a network share (read only)":
+      "Bir ağ paylaşımı kullan (salt okunur)",
+    "Firmware 5.05 to 13.52, and only with pkgs used where they are: the share is never renamed or moved. It needs a wired console or a good Wi-Fi: games read at the speed of the network.":
+      "Yazılım sürümü 5.05 ile 13.52 arası, ve yalnızca bulundukları yerde kullanılan pkg'lerle: paylaşımda hiçbir şeyin adı değişmez, hiçbir şey taşınmaz. Kablolu bağlantı ya da iyi bir Wi-Fi gerekir: oyunlar ağın hızında okunur.",
+    "Protocol":
+      "Protokol",
+    "Server":
+      "Sunucu",
+    "Export (NFS) or share (SMB)":
+      "Dışa aktarım (NFS) veya paylaşım (SMB)",
+    "Folder inside it":
+      "İçindeki klasör",
+    "Port":
+      "Port",
+    "User (SMB)":
+      "Kullanıcı (SMB)",
+    "Password (SMB)":
+      "Parola (SMB)",
+    "Remove several":
+      "Birkaçını kaldır",
+    "Console storage: turn on \"Also use pkgs in the console's /data/PS4Mount\" in Settings":
+      "Konsol belleği: Ayarlar'da \"Konsoldaki /data/PS4Mount içindeki pkg'leri de kullan\" seçeneğini aç",
+    "Remove games from the library":
+      "Oyunları kütüphaneden kaldır",
+    "The chosen games leave the console's home screen. Their pkgs stay where they are: nothing is deleted, and Add to library brings each one back.":
+      "Seçilen oyunlar konsolun ana ekranından kalkar. Pkg'leri yerinde kalır: hiçbir şey silinmez, Kütüphaneye ekle her birini geri getirir.",
+    "Remove the chosen ones":
+      "Seçilenleri kaldır",
+    "No games to remove (an open game is closed first)":
+      "Kaldırılacak oyun yok (açık oyun önce kapatılır)",
+    "Remove {0} game(s) from the library? Their pkgs stay where they are.":
+      "{0} oyun kütüphaneden kaldırılsın mı? Pkg'leri yerinde kalır.",
+    "{0} removed; not removed: {1}":
+      "{0} kaldırıldı; kaldırılamayanlar: {1}",
+    "{0} game(s) removed from the library":
+      "{0} oyun kütüphaneden kaldırıldı",
+    "Removing {0} of {1}…":
+      "{0} / {1} kaldırılıyor…",
+    "First start: check the settings (which folders, games per group, add-ons) and press Save in Settings. While this page is open no game is added; closed for 2 minutes without saving, the default settings are used.":
+      "İlk açılış: ayarları gözden geçir (hangi klasörler, grup başına oyun, DLC) ve Ayarlar'da Kaydet'e bas. Bu sayfa açıkken hiçbir oyun eklenmez; kaydetmeden 2 dakika kapalı kalırsa varsayılan ayarlar kullanılır.",
+    "Look for new games on it":
+      "İçinde yeni oyun ara",
+    "Every minute":
+      "Her dakika",
+    "Every 10 minutes":
+      "10 dakikada bir",
+    "Every hour":
+      "Saatte bir",
+    "Only with Scan for games":
+      "Yalnızca Oyunları tara ile",
+    "saved":
+      "kayıtlı",
+    "Find servers on the network":
+      "Ağdaki sunucuları bul",
+    "List the server's shares":
+      "Sunucunun paylaşımlarını listele",
+    "How to share a folder from a computer or a NAS":
+      "Bilgisayardan ya da NAS'tan klasör nasıl paylaşılır",
+    "Windows:":
+      "Windows:",
+    "right-click the folder, Properties, Sharing, Advanced Sharing, tick \"Share this folder\". Then fill in User and Password here with your Windows account. If the console does not find the PC, set its network as Private.":
+      "klasöre sağ tıkla, Özellikler, Paylaşım, Gelişmiş Paylaşım, \"Bu klasörü paylaştır\" kutusunu işaretle. Sonra burada Kullanıcı ve Parola alanlarına Windows hesabını yaz. Konsol bilgisayarı bulamazsa ağını Özel olarak ayarla.",
+    "macOS:":
+      "macOS:",
+    "System Settings, General, Sharing: turn on File Sharing and add the folder. In Options, turn on SMB sharing for your user, and use that user and password here.":
+      "Sistem Ayarları, Genel, Paylaşma: Dosya Paylaşma'yı aç ve klasörü ekle. Seçenekler'de kullanıcın için SMB paylaşımını aç ve burada o kullanıcı adıyla parolayı kullan.",
+    "Linux:":
+      "Linux:",
+    "share the folder with Samba (read only, guest allowed) or NFS (/etc/exports), and let the console's address through the firewall.":
+      "klasörü Samba (salt okunur, misafire izinli) ya da NFS (/etc/exports) ile paylaş ve güvenlik duvarında konsolun adresine izin ver.",
+    "NAS box":
+      "NAS cihazı",
+    "(Synology, QNAP, a router with USB): turn on SMB file sharing in its settings and give the shared folder read access.":
+      "(Synology, QNAP, USB'li bir modem): ayarlarından SMB dosya paylaşımını aç ve paylaşılan klasöre okuma izni ver.",
+    "A cable is much faster than Wi-Fi. With no switch or free router port, a cable straight from the computer to the console works too: share the computer's internet connection on that cable.":
+      "Kablo, Wi-Fi'dan çok daha hızlıdır. Switch ya da modemde boş port yoksa bilgisayardan konsola doğrudan bir kablo da olur: bilgisayarın internet bağlantısını o kablo üzerinden paylaş.",
+    "Looking for servers on the console's network...":
+      "Konsolun ağında sunucular aranıyor...",
+    "Choose a server:":
+      "Bir sunucu seç:",
+    "No server found. Check that the computer or NAS is on, on the same network as the console, shares a folder, and that its firewall allows file sharing.":
+      "Sunucu bulunamadı. Bilgisayarın ya da NAS'ın açık olduğunu, konsolla aynı ağda bulunduğunu, bir klasör paylaştığını ve güvenlik duvarının dosya paylaşımına izin verdiğini kontrol et.",
+    "Find a server first, or type its address in Server.":
+      "Önce bir sunucu bul ya da adresini Sunucu alanına yaz.",
+    "Asking {0} what it shares...":
+      "{0} sunucusuna neleri paylaştığı soruluyor...",
+    "Fill in User and Password, then press \"List the server's shares\".":
+      "Kullanıcı ve Parola'yı doldur, sonra \"Sunucunun paylaşımlarını listele\" düğmesine bas.",
+    "Choose the shared folder with your games:":
+      "Oyunlarının olduğu paylaşılan klasörü seç:",
+    "This server shares no folders.":
+      "Bu sunucu hiçbir klasör paylaşmıyor.",
+    "Ready: press Save to use it.":
+      "Hazır: kullanmak için Kaydet'e bas.",
+    "Turn on BinLoader (port 9090) in GoldHEN to use the share.":
+      "Paylaşımı kullanmak için GoldHEN'de BinLoader'ı (port 9090) aç.",
+    "guest":
+      "misafir",
+    "Language":
+      "Dil",
+    "Restore original files":
+      "Orijinal dosyaları geri getir",
+    "Takes games off the console and puts their pkgs (game, update and add-ons) back where they were, with the names they had. Nothing is deleted. The open game is closed first.":
+      "Oyunları konsoldan kaldırır ve pkg'lerini (oyun, güncelleme ve DLC) eski adlarıyla eski yerlerine koyar. Hiçbir şey silinmez. Açık oyun önce kapatılır.",
+    "Takes the game off the console and puts its pkgs back where they were, with the names they had. Nothing is deleted.":
+      "Oyunu konsoldan kaldırır ve pkg'lerini eski adlarıyla eski yerlerine koyar. Hiçbir şey silinmez.",
+    "Restore the files of all games":
+      "Tüm oyunların dosyalarını geri getir",
+    "Restore the files of chosen games":
+      "Seçilen oyunların dosyalarını geri getir",
+    "Use restored pkgs again":
+      "Geri getirilen pkg'leri yeniden kullan",
+    "Each chosen game gets its pkgs back where they were, with its update and all its add-ons. The open game is closed first.":
+      "Seçilen her oyunun pkg'leri, güncellemesi ve tüm DLC'leriyle birlikte eski yerine döner. Açık oyun önce kapatılır.",
+    "Files":
+      "Dosyalar",
+    "Restore the chosen ones":
+      "Seçilenleri geri getir",
+    "Restore the original files of {0}?\n\nThe game leaves the console and its pkgs (game, update and add-ons) go back where they were, with the names they had. The open game is closed first. PS4Mount stops using these pkgs. Nothing is deleted.":
+      "{0} için orijinal dosyalar geri getirilsin mi?\n\nOyun konsoldan kalkar ve pkg'leri (oyun, güncelleme ve DLC) eski adlarıyla eski yerlerine döner. Açık oyun önce kapatılır. PS4Mount bu pkg'leri kullanmayı bırakır. Hiçbir şey silinmez.",
+    "WARNING: this restores the original files of ALL {0} games: their pkgs (game, update and add-ons) go back where they were, with the names they had.\n\nThe open game is closed now, without saving. All PS4Mount games leave the console, {1} at a time, and PS4Mount stops using these pkgs. Nothing is deleted.\n\nContinue?":
+      "UYARI: bu, {0} oyunun HEPSİNİN orijinal dosyalarını geri getirir: pkg'leri (oyun, güncelleme ve DLC) eski adlarıyla eski yerlerine döner.\n\nAçık oyun şimdi kaydedilmeden kapatılır. Tüm PS4Mount oyunları her seferde {1} tane olmak üzere konsoldan kalkar ve PS4Mount bu pkg'leri kullanmayı bırakır. Hiçbir şey silinmez.\n\nDevam edilsin mi?",
+    "Restore the original files of {0} game(s), each with its update and all its add-ons?\n\nThe open game is closed now, without saving. The games leave the console{1}. Nothing is deleted.":
+      "{0} oyunun orijinal dosyaları, her biri güncellemesi ve tüm DLC'leriyle geri getirilsin mi?\n\nAçık oyun şimdi kaydedilmeden kapatılır. Oyunlar konsoldan kalkar{1}. Hiçbir şey silinmez.",
+    "Use the restored pkgs again? They are moved into the ps4 folder and added on the next scan.":
+      "Geri getirilen pkg'ler yeniden kullanılsın mı? ps4 klasörüne taşınıp bir sonraki taramada eklenirler.",
+    "The console's":
+      "Konsolun dili",
+    "Games removed from the library per group (1 to":
+      "Grup başına kütüphaneden kaldırılacak oyun (1 -",
+    "Select all":
+      "Tümünü seç",
+    "Game":
+      "Oyun",
+    "Pick the pkgs on this computer. Each one is checked first (it takes a second): only pkgs this console can use are sent, so no transfer ends in a game that does not start. They are added to the library when they arrive.":
+      "Bu bilgisayardaki pkg'leri seç. Her biri önce kontrol edilir (bir saniye sürer): yalnızca bu konsolun kullanabileceği pkg'ler gönderilir, böylece hiçbir aktarım açılmayan bir oyunla bitmez. Geldiklerinde kütüphaneye eklenirler.",
+    "Drop .pkg files here, or click to pick them":
+      ".pkg dosyalarını buraya bırak ya da seçmek için tıkla",
+    "Send to":
+      "Gönderilecek yer",
+    "Cancel transfer":
+      "Aktarımı iptal et",
+    "Send":
+      "Gönder",
+    "uploading to Drive ({0}%)":
+      "Drive'a yükleniyor (%{0})",
+    "downloading from Drive ({0}%)":
+      "Drive'dan indiriliyor (%{0})",
+    "waiting to go to Drive":
+      "Drive'a yüklenmek için sırada",
+    "waiting to come from Drive":
+      "Drive'dan inmek için sırada",
+    "reading again what already arrived…":
+      "gelenler yeniden okunuyor…",
+    "reading again what Drive already has…":
+      "Drive'da olanlar yeniden okunuyor…",
+    "Google Drive asks to connect again: open {0} and type {1}":
+      "Google Drive yeniden bağlanmanı istiyor: {0} adresini aç ve {1} yaz",
+    "The transfer goes on once you do":
+      "Bunu yaptığında aktarım devam eder",
+    "{0} of {1}":
+      "{0} / {1}",
+    "connection lost, trying again in {0} s":
+      "bağlantı koptu, {0} sn sonra yeniden denenecek",
+    "checking the file…":
+      "dosya kontrol ediliyor…",
+    "{0} left":
+      "{0} kaldı",
+    "measuring the speed…":
+      "hız ölçülüyor…",
+    "running for {0}":
+      "{0} süredir çalışıyor",
+    "less than a minute":
+      "bir dakikadan az",
+    "First, your own Google client (once). PS4Mount comes with none: yours stays on this console only.":
+      "Önce kendi Google istemcin (bir kez). PS4Mount hiçbir istemciyle gelmez: seninki yalnızca bu konsolda kalır.",
+    "Open":
+      "Şu adresi aç:",
+    ", create a project and enable the Google Drive API.":
+      ", bir proje oluştur ve Google Drive API'yi etkinleştir.",
+    "In Google Auth Platform (OAuth consent screen): audience External, and add your Google email in Audience → Test users (the app stays in Testing).":
+      "Google Auth Platform'da (OAuth izin ekranı): kitleyi Harici yap ve Google e-postanı Kitle → Test kullanıcıları bölümüne ekle (uygulama Test aşamasında kalır).",
+    "In Clients (Credentials), create an OAuth client of type TVs and Limited Input devices, and copy its client ID and secret here.":
+      "İstemciler (Kimlik bilgileri) bölümünde TV'ler ve Sınırlı Giriş cihazları türünde bir OAuth istemcisi oluştur ve istemci kimliğiyle gizli anahtarını buraya kopyala.",
+    "Client ID":
+      "İstemci kimliği",
+    "Client secret":
+      "İstemci gizli anahtarı",
+    "Change":
+      "Değiştir",
+    "Your Google client: {0}":
+      "Google istemcin: {0}",
+    "Google Drive":
+      "Google Drive",
+    "console.cloud.google.com":
+      "console.cloud.google.com",
+    "Back up to Drive":
+      "Drive'a yedekle",
+    "Connect Google Drive":
+      "Google Drive'ı bağla",
+    "Copies of your games in your own Google Drive: back up the library, send a game, and download it back to any drive of the console. PS4Mount can only see the files it puts in Drive (folder PS4Mount), nothing else of your Drive.":
+      "Oyunlarının kendi Google Drive'ındaki kopyaları: kütüphaneyi yedekle, bir oyun gönder ve sonra konsolun herhangi bir sürücüsüne geri indir. PS4Mount yalnızca Drive'a kendi koyduğu dosyaları (PS4Mount klasörü) görebilir, Drive'ının geri kalanını göremez.",
+    "On your phone or computer, open":
+      "Telefonunda ya da bilgisayarında şunu aç:",
+    "and type this code:":
+      "ve bu kodu yaz:",
+    "Waiting for you to allow it in your Google account…":
+      "Google hesabında izin vermen bekleniyor…",
+    "Connect":
+      "Bağlan",
+    "Back up the library":
+      "Kütüphaneyi yedekle",
+    "Refresh":
+      "Yenile",
+    "Disconnect":
+      "Bağlantıyı kes",
+    "Download to":
+      "İndirilecek yer",
+    "In Drive":
+      "Drive'da",
+    "Send to Drive":
+      "Drive'a gönder",
+    "Send to Drive again":
+      "Drive'a yeniden gönder",
+    "In Google Drive":
+      "Google Drive'da",
+    "in Drive ({0})":
+      "Drive'da ({0})",
+    "not in Drive":
+      "Drive'da değil",
+    "Uploading {0} to Drive":
+      "{0} Drive'a yükleniyor",
+    "Downloading {0} from Drive":
+      "{0} Drive'dan indiriliyor",
+    "Moving {0} to the Drive trash":
+      "{0} Drive çöp kutusuna taşınıyor",
+    "Reading Google Drive":
+      "Google Drive okunuyor",
+    "Asking Google for a code":
+      "Google'dan kod isteniyor",
+    "{0} more waiting":
+      "{0} tane daha sırada",
+    "{0} of {1} used":
+      "{0} / {1} kullanılıyor",
+    "{0} used":
+      "{0} kullanılıyor",
+    "on the console":
+      "konsolda",
+    "Download":
+      "İndir",
+    "Delete from Drive":
+      "Drive'dan sil",
+    "Nothing in Google Drive yet: use Back up the library, or Send to Drive on a game's page.":
+      "Google Drive'da henüz bir şey yok: Kütüphaneyi yedekle'yi ya da bir oyunun sayfasındaki Drive'a gönder'i kullan.",
+    "Disconnect Google Drive? The copies stay in your Drive; PS4Mount forgets the account.":
+      "Google Drive bağlantısı kesilsin mi? Kopyalar Drive'ında kalır; PS4Mount hesabı unutur.",
+    "Back up the whole library to Google Drive? Games already there are skipped. The console must stay on (not in rest mode) until it ends.":
+      "Tüm kütüphane Google Drive'a yedeklensin mi? Orada olan oyunlar atlanır. Bitene kadar konsol açık kalmalı (dinlenme modunda değil).",
+    "Stop the Drive transfer? An upload goes on from where it was the next time.":
+      "Drive aktarımı durdurulsun mu? Bir yükleme bir dahaki sefere kaldığı yerden devam eder.",
+    "Move {0} to the Drive trash? The pkgs on the console stay.":
+      "{0} Drive çöp kutusuna taşınsın mı? Konsoldaki pkg'ler kalır.",
+    "Ready":
+      "Hazır",
+    "Restart to play":
+      "Oynamak için yeniden başlat",
+    "Running":
+      "Açık",
+    "Not in library":
+      "Kütüphanede değil",
+    "Installed on console":
+      "Konsola kurulu",
+    "Adding":
+      "Ekleniyor",
+    "On another drive":
+      "Başka sürücüde",
+    "Drive not connected":
+      "Sürücü takılı değil",
+    "Add to library":
+      "Kütüphaneye ekle",
+    "Remove from library":
+      "Kütüphaneden kaldır",
+    "Close the game to remove it":
+      "Kaldırmak için oyunu kapat",
+    "Please wait…":
+      "Lütfen bekle…",
+    "Please wait...":
+      "Lütfen bekle...",
+    " (with update)":
+      " (güncellemeyle)",
+    "mounted {0}":
+      "bağlandı: {0}",
+    "1 add-on":
+      "1 DLC",
+    "{0} add-ons":
+      "{0} DLC",
+    "no add-ons":
+      "DLC yok",
+    "Game{0}{1}":
+      "Oyun{0}{1}",
+    ", update":
+      ", güncelleme",
+    " and {0}":
+      " ve {0}",
+    "Added. Restart the console once to play it.":
+      "Eklendi. Oynamak için konsolu bir kez yeniden başlat.",
+    "On {0}, which is not connected. Connect it to play.":
+      "{0} üzerinde ama bu sürücü takılı değil. Oynamak için tak.",
+    "{0} game(s)":
+      "{0} oyun",
+    "State":
+      "Durum",
+    "Version":
+      "Sürüm",
+    "v{0} (game v{1} with its update)":
+      "v{0} (oyun v{1}, güncellemesiyle)",
+    "Add-ons":
+      "DLC'ler",
+    "none":
+      "yok",
+    "Needs firmware":
+      "Gereken yazılım sürümü",
+    "unknown":
+      "bilinmiyor",
+    "Size":
+      "Boyut",
+    "On":
+      "Konum",
+    "game":
+      "oyun",
+    "update":
+      "güncelleme",
+    "add-on":
+      "DLC",
+    "other":
+      "diğer",
+    "Error: {0}":
+      "Hata: {0}",
+    "Also install big add-ons (over 256 MB)":
+      "Büyük DLC'leri de kur (256 MB üstü)",
+    "A game only sees an add-on the system has installed: big ones are copied to the console's storage, in the background (a few minutes). Off, they are not used.":
+      "Oyun yalnızca sistemin kurduğu DLC'leri görür: büyük olanlar arka planda konsol belleğine kopyalanır (birkaç dakika). Kapalıyken kullanılmazlar.",
+    "Ready to install":
+      "Kuruluma hazır",
+    "A homebrew app: it is sent to the console and installed with the system's installer, as by hand. The copy is deleted once it is installed.":
+      "Bir homebrew uygulaması: konsola gönderilir ve elle yapıldığı gibi sistemin yükleyicisiyle kurulur. Kurulunca kopyası silinir.",
+    "Could not read the list: {0}":
+      "Liste okunamadı: {0}",
+    "Could not read the settings: {0}":
+      "Ayarlar okunamadı: {0}",
+    "Could not read the log: {0}":
+      "Günlük okunamadı: {0}",
+    "Games per group must be a number from 1 to {0}":
+      "Grup başına oyun 1 ile {0} arasında bir sayı olmalı",
+    "Remove {0} from the library? Its pkgs stay where they are (deleting it on the console deletes them).":
+      "{0} kütüphaneden kaldırılsın mı? Pkg'leri yerinde kalır (konsoldan silmek onları da siler).",
+    "{0} game(s) selected":
+      "{0} oyun seçildi",
+    ", removed from the library {0} at a time":
+      ", kütüphaneden her seferde {0} tane kaldırılır",
+    "No games selected":
+      "Seçili oyun yok",
+    "No PS4Mount games on the connected drives":
+      "Takılı sürücülerde PS4Mount oyunu yok",
+    ", {0} at a time":
+      ", her seferde {0} tane",
+    "{0} free":
+      "{0} boş",
+    "No drive connected":
+      "Takılı sürücü yok",
+    "no place to send it to":
+      "gönderilecek bir yer yok",
+    "not enough space in {0}: {1} free, {2} needed":
+      "{0} içinde yeterli yer yok: {1} boş, {2} gerekli",
+    "Checking…":
+      "Kontrol ediliyor…",
+    "Sending {0}%":
+      "Gönderiliyor %{0}",
+    "Sent":
+      "Gönderildi",
+    "Failed":
+      "Başarısız",
+    "Cannot be used":
+      "Kullanılamaz",
+    "Ready to send":
+      "Göndermeye hazır",
+    "needs firmware {0}":
+      "{0} yazılım sürümü gerekiyor",
+    "Send again":
+      "Yeniden gönder",
+    "Remove":
+      "Kaldır",
+    "could not be checked: {0}":
+      "kontrol edilemedi: {0}",
+    "the connection to the console was lost":
+      "konsolla bağlantı koptu",
+    "cancelled":
+      "iptal edildi",
+    "Cancel the transfer in progress?":
+      "Süren aktarım iptal edilsin mi?",
+    "Stop PS4Mount? The games stay unavailable until it is loaded again.":
+      "PS4Mount durdurulsun mu? Yeniden yüklenene kadar oyunlar açılamaz.",
+    "Download links":
+      "Bağlantıdan indir",
+    "The console downloads them itself (you can close this page): a pkg, a ZIP or a RAR, also in parts. Paste the direct links, the ones that start the download, one per line; all the parts of a RAR (name.part1.rar, name.part2.rar...) become one download. Its pkgs are added to the library when they arrive.":
+      "Konsol onları kendisi indirir (bu sayfayı kapatabilirsin): bir pkg, ZIP ya da RAR, parçalı olanlar da. İndirmeyi başlatan doğrudan bağlantıları her satıra bir tane yapıştır; bir RAR'ın tüm parçaları (ad.part1.rar, ad.part2.rar...) tek indirme olur. Pkg'leri geldiklerinde kütüphaneye eklenir.",
+    "A link with no file name in it: add | and its name.":
+      "İçinde dosya adı olmayan bir bağlantı: | ve adını ekle.",
+    "Password (if the archive has one)":
+      "Parola (arşivde varsa)",
+    "Not needed for one that opened another download, nor for the site in brackets at the start of the name ([SITE]-game): those are tried by themselves.":
+      "Daha önce başka bir indirmeyi açmış bir parola ya da adın başındaki köşeli parantezdeki site adı ([SİTE]-oyun) için gerekmez: bunlar kendiliğinden denenir.",
+    "The password of the archive:":
+      "Arşivin parolası:",
+    "Save to":
+      "Kaydedilecek yer",
+    "Checking the links of {0}…":
+      "{0} bağlantıları kontrol ediliyor…",
+    "through the browser":
+      "tarayıcı üzerinden",
+    "Downloading {0}":
+      "{0} indiriliyor",
+    "Extracting {0}":
+      "{0} çıkarılıyor",
+    "extracting {0}":
+      "{0} çıkarılıyor",
+    "downloading":
+      "indiriliyor",
+    "waiting":
+      "bekliyor",
+    "{0} parts":
+      "{0} parça",
+    "Try again":
+      "Yeniden dene",
+    "paste at least one link":
+      "en az bir bağlantı yapıştır",
+    "Remove this download? What it downloaded so far is deleted.":
+      "Bu indirme kaldırılsın mı? Şimdiye kadar inenler silinir.",
+    "Cancel the download of {0}? What it downloaded so far is deleted.":
+      "{0} indirmesi iptal edilsin mi? Şimdiye kadar inenler silinir.",
+    "Keep free on the console (GB)":
+      "Konsolda boş bırakılacak alan (GB)",
+    "Add-ons and pkgs sent to the console's storage never take this space: what is left for saves and the system. 0: no limit.":
+      "DLC'ler ve konsol belleğine gönderilen pkg'ler bu alanı asla kullanmaz: burası kayıtlar ve sistem için kalır. 0: sınır yok.",
+    "Saves":
+      "Kayıtlar",
+    "Copy the saves to the USB drive after each session":
+      "Her oturumdan sonra kayıtları USB sürücüye kopyala",
+    "The games keep their saves on the console, where nothing can cut a save in half (rest mode powers the USB drive off, and a drive can be pulled out). After a game closes, its saves are copied to PS4Mount/saves on the USB drive when they changed; a game's page shows the copies and puts one back.":
+      "Oyunlar kayıtlarını konsolda tutar; orada hiçbir şey bir kaydı yarıda kesemez (dinlenme modu USB sürücünün gücünü keser ve sürücü çıkarılabilir). Bir oyun kapandığında, kayıtları değiştiyse USB sürücüde PS4Mount/saves içine kopyalanır; oyunun sayfası kopyaları gösterir ve birini geri yükler.",
+    "Copies kept per game and user":
+      "Oyun ve kullanıcı başına saklanacak kopya",
+    "On the console: {0} user(s), {1}":
+      "Konsolda: {0} kullanıcı, {1}",
+    "copied":
+      "kopyalandı",
+    "No saves of this game on the console yet":
+      "Konsolda bu oyuna ait henüz kayıt yok",
+    "Copies after each session are off (Settings → Saves).":
+      "Oturum sonrası kopyalar kapalı (Ayarlar → Kayıtlar).",
+    "No USB drive connected: copies go to one when it is.":
+      "Takılı USB sürücü yok: biri takılınca kopyalar oraya gider.",
+    "Close the game to copy its saves":
+      "Kayıtlarını kopyalamak için oyunu kapat",
+    "Copy the saves now":
+      "Kayıtları şimdi kopyala",
+    "Copies on {0} (newest first):":
+      "{0} üzerindeki kopyalar (en yenisi üstte):",
+    "(before a restore)":
+      "(geri yüklemeden önce)",
+    "user {0}":
+      "kullanıcı {0}",
+    "Put back":
+      "Geri yükle",
+    "No copies on {0} yet.":
+      "{0} üzerinde henüz kopya yok.",
+    "Put back the saves of {0} from {1}?\n\nThe saves the console has now are copied to the USB drive first, so this can be undone. The game must be closed.":
+      "{0} kayıtları {1} tarihli kopyadan geri yüklensin mi?\n\nKonsoldaki mevcut kayıtlar önce USB sürücüye kopyalanır, yani bu işlem geri alınabilir. Oyun kapalı olmalı.",
+    "The space kept free must be a number from 0 to {0} GB":
+      "Boş bırakılacak alan 0 ile {0} GB arasında bir sayı olmalı",
+    "The copies kept must be a number from 1 to {0}":
+      "Saklanacak kopya sayısı 1 ile {0} arasında olmalı"
   }
 };
 var LANG = 'en';
@@ -361,7 +929,7 @@ function translatePage() {
   }
 }
 
-/* Switches the page to tag ("es", "en"); English for a language with no table. */
+/* Switches the page to tag ("es", "tr", "en"); English for a language with no table. */
 function setLang(tag) {
   var code = LANGS[tag] ? tag : 'en';
   if (code === LANG) return false;

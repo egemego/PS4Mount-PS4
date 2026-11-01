@@ -5,7 +5,10 @@
 **Juega pkgs fake de PS4 desde un USB o desde la memoria de la consola, sin instalarlos.**
 **Play PS4 fake pkgs from a USB drive or from the console's storage, without installing them.**
 
-**[Español](#español) · [English](#english)**
+**[Español](#español) · [English](#english) · [Türkçe](#türkçe)**
+
+> [!NOTE]
+> **0.7.4-tr1** (Türkçe sürüm): kayıtların USB'ye kopyası ve geri yüklemesi, konsolda boş alan koruması, Türkçe panel. Kurulum: [KURULUM-TR.md](KURULUM-TR.md). Not tested on a console yet / Henüz konsolda denenmedi.
 
 PS4Mount PS4 es un port, exclusivo para PS4, de [PS4Mount](https://github.com/gasb07/ps4mount) de **gasb07** (para PS5).
 PS4Mount PS4 is a PS4-only port of [PS4Mount](https://github.com/gasb07/ps4mount) by **gasb07** (for the PS5).
@@ -38,6 +41,7 @@ Probado en una PS4 con firmware **13.52** y GoldHEN. El panel y las notificacion
 | Juegos desde una **NAS** por **SMB o NFS**, solo lectura, con búsqueda en la red | <img src="docs/icons/ok.svg" width="14" height="14" alt=""> Probado (firmware 13.52 y 6.72; de 5.05 a 13.50, experimental) |
 | **Actualizaciones** | <img src="docs/icons/ok.svg" width="14" height="14" alt=""> Probado |
 | Juegos **donde están**, sin mover ni renombrar los pkgs (cualquier carpeta de la unidad) | <img src="docs/icons/ok.svg" width="14" height="14" alt=""> Probado |
+| **Copias de las partidas** en el USB después de cada sesión, y devolverlas desde el panel | <img src="docs/icons/warn.svg" width="14" height="14" alt=""> Nuevo en 0.7.4-tr1, sin probar en consola |
 | **DLC** de hasta 256 MB (casi todos: trajes, packs, licencias) | <img src="docs/icons/ok.svg" width="14" height="14" alt=""> Probado: PS4Mount los instala con el instalador del sistema en segundos, y aparecen en la información del juego |
 | DLC de más de 256 MB | <img src="docs/icons/ok.svg" width="14" height="14" alt=""> Probado: se instalan solos con el instalador del sistema, en segundo plano (ocupan memoria interna; se puede apagar en Ajustes) |
 | **Enviar juegos desde el PC** por la red, con comprobación previa | <img src="docs/icons/ok.svg" width="14" height="14" alt=""> Probado (unos 16 MB/s por cable) |
@@ -272,7 +276,9 @@ Ya está: el panel muestra tu correo y tu espacio. La conexión se guarda en la 
 | Organizar los pkgs en la carpeta ps4 | No | Mueve los pkgs a `ps4/<TITLE_ID>/` para tenerlos ordenados. Apagado (por defecto), los pkgs se usan donde están, con su nombre, sin mover ni renombrar nada; los que PS4Mount ya había organizado vuelven solos a su sitio original (los organizados a mano se quedan en `ps4/`). En la memoria interna se buscan solo `/data/PS4Mount` y `ps4`. |
 | Usar también los pkgs de /data/PS4Mount | Sí | Usa también los pkgs de la memoria interna. |
 | NAS (NFS o SMB) | No | Usa los pkgs de una carpeta compartida en red, **solo lectura** y sin mover ni renombrar nada (con Organizar activado no aparece). Firmware 5.05 a 13.52 (ver abajo). |
-| Idioma | El de la consola | El idioma del panel y de las notificaciones: el de la consola, inglés o español. |
+| Idioma | El de la consola | El idioma del panel y de las notificaciones: el de la consola, inglés, español o turco. |
+| Dejar libre en la consola (GB) | 2 | Los DLC (también los pequeños) y los pkgs enviados a la memoria de la consola nunca ocupan este espacio. 0: sin límite. |
+| Partidas guardadas: copiar al USB después de cada sesión / copias por juego | Sí / 10 | Al cerrar un juego de PS4Mount, sus partidas se copian a `PS4Mount/saves/<usuario>/<TITLE_ID>/<fecha-hora>/` del USB si cambiaron. Las partidas que usa el juego siguen en la consola. La ficha del juego devuelve una copia (antes copia las de la consola). |
 
 Se guardan en `/data/ps4mount/config.txt`. Los ajustes también tienen **Restaurar los archivos de todos los juegos** (o de los elegidos) y **Volver a usar los pkgs restaurados**.
 
@@ -428,6 +434,7 @@ Tested on a PS4 on firmware **13.52** with GoldHEN. The panel and the notificati
 | Games from a **NAS** over **SMB or NFS**, read only, found on the network | <img src="docs/icons/ok.svg" width="14" height="14" alt=""> Tested (firmware 13.52 and 6.72; 5.05 to 13.50 experimental) |
 | **Updates** | <img src="docs/icons/ok.svg" width="14" height="14" alt=""> Tested |
 | Games **where they are**, without moving or renaming their pkgs (any folder of the drive) | <img src="docs/icons/ok.svg" width="14" height="14" alt=""> Tested |
+| **Copies of the saves** on the USB drive after each session, and putting one back from the panel | <img src="docs/icons/warn.svg" width="14" height="14" alt=""> New in 0.7.4-tr1, not tested on a console yet |
 | **Add-ons (DLC)** up to 256 MB (almost all: costumes, packs, licenses) | <img src="docs/icons/ok.svg" width="14" height="14" alt=""> Tested: PS4Mount installs them with the system's installer in seconds, and they show in the game's information |
 | Add-ons over 256 MB | <img src="docs/icons/ok.svg" width="14" height="14" alt=""> Tested: installed on their own with the system's installer, in the background (they take internal space; can be turned off in Settings) |
 | **Sending games from a computer** over the network, checked first | <img src="docs/icons/ok.svg" width="14" height="14" alt=""> Tested (about 16 MB/s over a cable) |
@@ -662,7 +669,9 @@ That is all: the panel shows your email and your space. The connection is kept o
 | Organize pkgs into the ps4 folder | Off | Moves the pkgs to `ps4/<TITLE_ID>/` to keep them in order. Off (the default), the pkgs are used where they are, with their own names, without moving or renaming anything; the ones PS4Mount had organized go back on their own to where they were (the ones you organized by hand stay in `ps4/`). On the console's storage, only `/data/PS4Mount` and `ps4` are searched. |
 | Also use pkgs in the console's /data/PS4Mount | On | Uses the pkgs in the console's storage too. |
 | NAS (NFS or SMB) | Off | Uses the pkgs in a shared network folder, **read only** and without moving or renaming anything (it does not show with Organize on). Firmware 5.05 to 13.52 (see below). |
-| Language | The console's | The language of the panel and the notifications: the console's, English or Spanish. |
+| Language | The console's | The language of the panel and the notifications: the console's, English, Spanish or Turkish. |
+| Keep free on the console (GB) | 2 | Add-ons (small ones too) and pkgs sent to the console's storage never take this space. 0: no limit. |
+| Saves: copy to the USB drive after each session / copies per game | On / 10 | When a PS4Mount game closes, its saves are copied to `PS4Mount/saves/<user>/<TITLE_ID>/<date-time>/` on the USB drive if they changed. The saves the game uses stay on the console. A game's page puts a copy back (the console's saves are copied first). |
 
 They are saved in `/data/ps4mount/config.txt`. The settings also have **Restore the files of all games** (or of chosen ones) and **Use restored pkgs again**.
 
@@ -792,3 +801,21 @@ You need the [ps4-payload-sdk](https://github.com/ps4-payload-dev/sdk) **built f
 ## License
 
 GPL-3.0-or-later (see [LICENSE](LICENSE)). If you publish your own version, keep the notices, distribute the changes under the same license and, please, mention gasb07 and link the original project.
+
+---
+
+<a name="türkçe"></a>
+# Türkçe
+
+PS4Mount, jailbreak'li bir PS4 için bir payload'dır: oyunun pkg'lerini (güncellemesi ve DLC'leriyle) exFAT bir USB sürücüye koyarsın, PS4Mount onları ana ekrana ekler ve **kurmadan, doğrudan pkg'den** oynarsın. Oyun, güncelleme ve DLC pkg'leri **içlerindeki Title ID'ye göre** eşleştirilir; bir oyunun güncellemesi başka bir oyuna asla karışmaz.
+
+Bu sürüm (**0.7.4-tr1**) şunları ekler:
+
+- **Kayıtların USB'ye kopyası**: oyunlar kayıtlarını konsolda kullanır (dinlenme modu USB'nin gücünü keser; kayıt USB'de olsaydı yarıda kesilebilirdi). Oyun kapanınca kayıtları değiştiyse USB'de `PS4Mount/saves/` içine kopyalanır. Oyunun panel sayfasından bir kopya geri yüklenebilir; önce konsoldaki kayıtların kopyası alınır, yani geri alınabilir.
+- **Konsolda boş alan koruması**: DLC'ler ve konsola gönderilen pkg'ler Ayarlar'da seçilen alanı (varsayılan 2 GB) kullanmaz.
+- **Türkçe** panel ve bildirimler (konsol Türkçe ise kendiliğinden, ya da Ayarlar → Dil → Türkçe).
+
+Adım adım kurulum, klasör düzeni ve sınırlar: **[KURULUM-TR.md](KURULUM-TR.md)**.
+
+> [!WARNING]
+> Bu sürüm henüz bir konsolda denenmedi (bilgisayardaki testlerden geçti). Kullanmadan önce kayıtlarını yedekle.

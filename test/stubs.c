@@ -74,6 +74,13 @@ int app_upload(int fd, const char *query, const void *pre, size_t pre_len, uint6
 }
 void app_uploads_json(buf_t *out) { buf_printf(out, "{\"state\":\"idle\"}"); }
 void app_dests_json(buf_t *out) { buf_printf(out, "{\"dests\":[]}"); }
+void app_saves_json(const char *tid, buf_t *out) { buf_printf(out, "{\"title_id\":\"%s\",\"copies\":[]}", tid); }
+int app_saves_backup(const char *tid, char *msg, size_t cap) { return record("saves_backup", tid, msg, cap); }
+int app_saves_restore(const char *tid, const char *user, const char *stamp, char *msg, size_t cap) {
+    char arg[96];
+    snprintf(arg, sizeof(arg), "%s %s %s", tid, user, stamp);
+    return record("saves_restore", arg, msg, cap);
+}
 
 void drive_status_json(buf_t *out) { buf_printf(out, "{\"configured\":true}"); }
 int drive_connect(char *msg, size_t n) { return record("drive_connect", NULL, msg, n); }

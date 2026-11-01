@@ -302,6 +302,31 @@ int main(void) {
     ask2(nul, sizeof(nul) - 1, NULL);
     CHECK(g_stub_calls == before);
 
+    printf("saves: copies on the USB drive\n");
+    r = ask("GET /api/saves?title_id=CUSA00411 HTTP/1.1\r\n\r\n");
+    CHECK(status(r, "200") && strstr(r, "\"title_id\":\"CUSA00411\"") && strstr(r, "\"copies\":[]"));
+    r = ask("GET /api/saves?title_id=../../x HTTP/1.1\r\n\r\n");
+    CHECK(strstr(r, "\"ok\":false") != NULL);
+    before = g_stub_calls;
+    r = ask("POST /api/saves/backup?title_id=CUSA00411 HTTP/1.1\r\nContent-Length: 0\r\n\r\n"); /* no panel header */
+    CHECK(status(r, "403") && g_stub_calls == before);
+    r = ask("GET /api/saves/backup?title_id=CUSA00411 HTTP/1.1\r\nX-PS4Mount: 1\r\n\r\n"); /* GET changes nothing */
+    CHECK(g_stub_calls == before);
+    r = ask("POST /api/saves/backup?title_id=CUSA00411 HTTP/1.1\r\nX-PS4Mount: 1\r\nContent-Length: 0\r\n\r\n");
+    CHECK(status(r, "200") && !strcmp(g_stub_call, "saves_backup") && !strcmp(g_stub_arg, "CUSA00411"));
+    r = ask("POST /api/saves/restore?title_id=CUSA00411&user=1eb71bbd&stamp=20261101-231500 HTTP/1.1\r\nX-PS4Mount: 1\r\n"
+            "Content-Length: 0\r\n\r\n");
+    CHECK(status(r, "200") && !strcmp(g_stub_call, "saves_restore") &&
+          !strcmp(g_stub_arg, "CUSA00411 1eb71bbd 20261101-231500"));
+    before = g_stub_calls;
+    r = ask("POST /api/saves/restore?title_id=CUSA00411&user=1eb71bbd HTTP/1.1\r\nX-PS4Mount: 1\r\nContent-Length: 0\r\n\r\n");
+    CHECK(strstr(r, "\"ok\":false") && g_stub_calls == before); /* which copy is missing */
+    r = ask("POST /api/saves/restore?title_id=CUSA00411&user=1eb71bbd&stamp=../../etc HTTP/1.1\r\nX-PS4Mount: 1\r\n"
+            "Content-Length: 0\r\n\r\n");
+    CHECK(strstr(r, "\"ok\":false") && g_stub_calls == before); /* no path in a name */
+    r = ask("POST /api/saves/erase?title_id=CUSA00411 HTTP/1.1\r\nX-PS4Mount: 1\r\nContent-Length: 0\r\n\r\n");
+    CHECK(strstr(r, "\"ok\":false") && g_stub_calls == before);
+
     printf("answers are valid JSON strings\n");
     r = post("/api/rescan", "");
     CHECK(strstr(r, "\"message\":\"done \\\"rescan\\\"\"") != NULL || strstr(r, "Looking for games") != NULL);

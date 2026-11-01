@@ -59,12 +59,13 @@
 #include "netfs.h"
 #include "origin.h"
 #include "pkg.h"
+#include "saves.h"
 #include "shortpath.h"
 #include "titlecache.h"
 #include "web.h"
 #include "icon_data.h"
 
-#define VERSION "PS4Mount 0.7.4-fix"
+#define VERSION "PS4Mount 0.7.4-tr1"
 #define LOCK_PORT 9032
 #define SCAN_SECONDS 10
 /* A full walk of the drive is slower on drives with many files: the catalog is brought
@@ -110,6 +111,9 @@ typedef struct {
     char nas_pass[64];
     int dlc_big;       /* add-ons over DLC_INSTALL_MAX are installed too (they take space on the console) */
     int nas_rescan;    /* minutes between looks at the share for new pkgs; 0: only when asked */
+    int saves;         /* the saves of PS4Mount's games are copied to a USB drive after each session */
+    int saves_keep;    /* copies kept per game and user */
+    int reserve_gb;    /* GB that installs (add-ons) and pkgs sent to the console leave free on it */
 } config_t;
 
 #define MAX_RESTORE_BATCH 10
@@ -118,7 +122,12 @@ typedef struct {
  * moved until the user puts it there (the drive root, "", is still a choice). */
 #define DEFAULT_SCAN_PATH "PS4Mount"
 
-static config_t g_cfg = {1, 5, 1, {DEFAULT_SCAN_PATH}, 1, 5, 1, 1, -1, 0, NAS_NFS, 0, "", "", "", "", "", 1, 1};
+static config_t g_cfg = {1, 5, 1, {DEFAULT_SCAN_PATH}, 1, 5, 1, 1, -1, 0, NAS_NFS, 0, "", "", "", "", "", 1, 1, 1, 10, 2};
+#define SAVES_KEEP_MAX 50
+#define RESERVE_GB_MAX 200
+/* The next look at the saves of the games that are not open (saves_tick). */
+static time_t g_saves_next;
+static void saves_soon(void);
 #define NAS_RESCAN_MAX 1440 /* minutes: once a day */
 static int g_setup; /* a first start: no game is added until the settings are saved (first_start) */
 /* A first start with nobody at the panel for this long goes on with the default settings:
@@ -368,7 +377,7 @@ static int root_present(const char *root) {
 static const char *root_label(const char *root) {
     if (is_nas(root))
         return "NAS";
-    return is_internal(root) ? TR("internal storage", "memoria interna") : root + 5;
+    return is_internal(root) ? TR("internal storage", "memoria interna", "iç bellek") : root + 5;
 }
 
 /* The short name of a drive in the state folder and in the panel. The share has one
@@ -682,7 +691,8 @@ static void refuse_patch(const char *tid, const char *patch_path, const char *na
     if (write_badpatch(tid, patch_path))
         return;
     printf("[reg] %s: the system refuses update %s: left out until the pkg changes\n", tid, patch_path);
-    notify(TR("%s: the update is left out, the system refuses it", "%s: se deja fuera la actualización, el sistema la rechaza"),
+    notify(TR("%s: the update is left out, the system refuses it", "%s: se deja fuera la actualización, el sistema la rechaza",
+              "%s: güncelleme dışarıda bırakıldı, sistem onu kabul etmiyor"),
            name && name[0] ? name : tid);
 }
 
@@ -722,12 +732,14 @@ static int src_open_paths(title_src_t *t, const char *tid, const catalog_t *cat,
         if (patch_refused(tid, t->patch_path)) {
             snprintf(t->update_issue, sizeof(t->update_issue), "%s",
                      TR("Update left out: the system refuses it. It is tried again when the pkg changes",
-                        "Actualización descartada: el sistema la rechaza. Se vuelve a probar cuando cambie el pkg"));
+                        "Actualización descartada: el sistema la rechaza. Se vuelve a probar cuando cambie el pkg",
+                        "Güncelleme dışarıda bırakıldı: sistem onu kabul etmiyor. Pkg değişince yeniden denenir"));
         } else if (pkg_open(&t->patch, t->patch_path) ||
             read_sfo_ex(&t->patch, &t->patch_sfo, t->patch_sfo_sha, &t->patch_sfo_len)) {
             snprintf(t->update_issue, sizeof(t->update_issue), "%s",
                      TR("Update ignored: the update pkg could not be read",
-                        "Actualización ignorada: no se pudo leer el pkg de la actualización"));
+                        "Actualización ignorada: no se pudo leer el pkg de la actualización",
+                        "Güncelleme yok sayıldı: güncelleme pkg'si okunamadı"));
             if (t->patch.fd > 0)
                 pkg_close(&t->patch);
         } else {
@@ -738,7 +750,8 @@ static int src_open_paths(title_src_t *t, const char *tid, const catalog_t *cat,
             if (strcmp(t->patch.title_id, tid)) {
                 snprintf(t->update_issue, sizeof(t->update_issue),
                          TR("Update ignored: it is for %s version %s, the game is %s version %s",
-                            "Actualización ignorada: es para %s versión %s, el juego es %s versión %s"),
+                            "Actualización ignorada: es para %s versión %s, el juego es %s versión %s",
+                            "Güncelleme yok sayıldı: %s sürüm %s için, oyun ise %s sürüm %s"),
                          t->patch.title_id, uver, tid, gver);
                 pkg_close(&t->patch);
             } else {
@@ -1516,6 +1529,8 @@ static void pump_events(int ms);
 /* 0 when installed, 1 when the installer would not take it now, 2 when it already would
  * not earlier in this run (see g_dlc_failed: said once). */
 static uint64_t free_bytes(const char *dir);
+/* The bytes the settings keep free on the console. */
+static uint64_t internal_reserve(void) { return (uint64_t)g_cfg.reserve_gb << 30; }
 
 /* 0 installed, 1 refused (tried again at the next load), 2 skipped, 3 started in the background. */
 static int dlc_install(dlc_src_t *a) {
@@ -1531,10 +1546,23 @@ static int dlc_install(dlc_src_t *a) {
     int big = a->pkg.pkg_size > DLC_INSTALL_MAX;
     if (big && dlc_pending(a->pkg.content_id))
         return 3;
+    /* Settings: the space kept free on the console, for every add-on (small ones too) */
+    uint64_t reserve = internal_reserve();
+    if (reserve && free_bytes("/user") < a->pkg.pkg_size + reserve) {
+        const sfo_item_t *n = sfo_get(&a->sfo, "TITLE");
+        notify(TR("Add-on %s (%llu MB) not installed: the console keeps %d GB free (Settings)",
+                  "DLC %s (%llu MB) no instalado: la consola deja %d GB libres (Ajustes)",
+                  "%s DLC'si (%llu MB) kurulmadı: konsolda %d GB boş alan korunuyor (Ayarlar)"),
+               n && !n->is_int ? n->sval : a->pkg.content_id, (unsigned long long)(a->pkg.pkg_size >> 20), g_cfg.reserve_gb);
+        if (g_ndlc_failed < MAX_DLC_FAILED)
+            snprintf(g_dlc_failed[g_ndlc_failed++], sizeof(g_dlc_failed[0]), "%s", a->pkg.content_id);
+        return 2;
+    }
     if (big && (free_bytes("/user") < a->pkg.pkg_size + DLC_SPACE_MARGIN || g_ndlc_pending == MAX_DLC_PENDING)) {
         const sfo_item_t *n = sfo_get(&a->sfo, "TITLE");
         notify(TR("Not enough space on the console to install the add-on %s (%llu MB): free some space and load PS4Mount again",
-                  "No hay espacio en la consola para instalar el DLC %s (%llu MB): libera espacio y vuelve a cargar PS4Mount"),
+                  "No hay espacio en la consola para instalar el DLC %s (%llu MB): libera espacio y vuelve a cargar PS4Mount",
+                  "Konsolda %s DLC'sini (%llu MB) kuracak yer yok: biraz yer aç ve PS4Mount'u yeniden yükle"),
                n && !n->is_int ? n->sval : a->pkg.content_id, (unsigned long long)(a->pkg.pkg_size >> 20));
         if (g_ndlc_failed < MAX_DLC_FAILED)
             snprintf(g_dlc_failed[g_ndlc_failed++], sizeof(g_dlc_failed[0]), "%s", a->pkg.content_id);
@@ -1586,7 +1614,7 @@ static void dlc_pending_check(void) {
             continue;
         }
         if (done)
-            notify(TR("Add-on installed: %s", "DLC instalado: %s"), p->name);
+            notify(TR("Add-on installed: %s", "DLC instalado: %s", "DLC kuruldu: %s"), p->name);
         else {
             printf("[dlc] %s: not installed after %d s, given up\n", p->content_id, DLC_PENDING_SECONDS);
             if (g_ndlc_failed < MAX_DLC_FAILED)
@@ -1610,13 +1638,15 @@ static void install_title_dlc(title_src_t *t) {
     }
     if (started)
         notify(TR("%s: installing %d big add-on(s) (%llu.%llu GB) in the background; each one is said when it is ready",
-                  "%s: instalando %d DLC grande(s) (%llu,%llu GB) en segundo plano; se avisa cuando cada uno esté listo"),
+                  "%s: instalando %d DLC grande(s) (%llu,%llu GB) en segundo plano; se avisa cuando cada uno esté listo",
+                  "%s: %d büyük DLC (%llu.%llu GB) arka planda kuruluyor; her biri hazır olunca bildirilir"),
                t->name, started, (unsigned long long)(bytes * 10 >> 30) / 10, (unsigned long long)(bytes * 10 >> 30) % 10);
     if (left)
         notify(TR("%s: %d add-on(s) could not be installed now; the game is added without them and they are tried again "
                   "the next time PS4Mount loads",
                   "%s: %d DLC no se pudieron instalar ahora; el juego se añade sin ellos y se vuelven a intentar la "
-                  "próxima vez que cargues PS4Mount"),
+                  "próxima vez que cargues PS4Mount",
+                  "%s: %d DLC şu an kurulamadı; oyun onlarsız eklendi, PS4Mount bir dahaki yüklenişinde yeniden denenecekler"),
                t->name, left);
 }
 
@@ -2606,7 +2636,8 @@ static int adopt_dir_pass(const char *root, const char *dir, int pass) {
             ver_text(sysver->ival, need, sizeof(need));
             ver_text(g_fw, have, sizeof(have));
             notify(TR("%s is built for firmware %s (this console has %s): it only runs with a backport",
-                      "%s está hecho para el firmware %s (esta consola tiene %s): solo funciona con un backport"),
+                      "%s está hecho para el firmware %s (esta consola tiene %s): solo funciona con un backport",
+                      "%s, %s yazılım sürümü için yapılmış (bu konsolda %s var): yalnızca backport ile çalışır"),
                    e->d_name, need, have);
         }
         int is_app = cat && !strcmp(cat->sval, "gd"), is_patch = cat && !strcmp(cat->sval, "gp");
@@ -2660,9 +2691,11 @@ static int adopt_dir_pass(const char *root, const char *dir, int pass) {
                 /* duplicates, and a second copy of a game, stay where they are */
                 if (first_time(path))
                     notify(same ? TR("%s is already in use for %s; the copy was left where it is",
-                                     "%s ya se usa para %s; la copia se deja donde está")
+                                     "%s ya se usa para %s; la copia se deja donde está",
+                                     "%s zaten %s için kullanılıyor; kopya olduğu yerde bırakıldı")
                                 : TR("%s: %s already has a game package; the new one was left where it is",
-                                     "%s: %s ya tiene un pkg de juego; el nuevo se deja donde está"),
+                                     "%s: %s ya tiene un pkg de juego; el nuevo se deja donde está",
+                                     "%s: %s için zaten bir oyun paketi var; yenisi olduğu yerde bırakıldı"),
                            e->d_name, tid);
                 continue;
             }
@@ -2681,7 +2714,8 @@ static int adopt_dir_pass(const char *root, const char *dir, int pass) {
             if (!origin_find(game, "patch.pkg", was, sizeof(was)))
                 origin_add(game, old + strlen(game) + 1, was);
             notify(TR("New update for %s (v%s): the previous one was moved to ps4/%s/replaced",
-                      "Nueva actualización de %s (v%s): la anterior se movió a ps4/%s/replaced"),
+                      "Nueva actualización de %s (v%s): la anterior se movió a ps4/%s/replaced",
+                      "%s için yeni güncelleme (v%s): öncekisi ps4/%s/replaced klasörüne taşındı"),
                    tid, ver, tid);
         }
         if (rename(path, dst)) {
@@ -2861,14 +2895,16 @@ static int adopt_root_pkgs(const char *root) {
     mem_free(old);
     if (g_dlc_orphans && !same)
         notify(TR("%s: %d add-on(s) wait for their game, which is not on this drive (see the log)",
-                  "%s: %d DLC esperan su juego, que no está en esta unidad (ver el log)"),
+                  "%s: %d DLC esperan su juego, que no está en esta unidad (ver el log)",
+                  "%s: %d DLC, bu sürücüde olmayan oyununu bekliyor (günlüğe bak)"),
                root_label(root),
                waiting_count(root));
     if (g_dlc_orphans && !same)
         write_file(seen, sig, strlen(sig), 0666);
     if (g_dlc_dupes)
         notify(TR("%s: %d add-on copy(ies) were left in place because the game already has them",
-                  "%s: %d copia(s) de DLC se dejan donde están porque el juego ya las tiene"),
+                  "%s: %d copia(s) de DLC se dejan donde están porque el juego ya las tiene",
+                  "%s: oyunda zaten olduğu için %d DLC kopyası yerinde bırakıldı"),
                root_label(root),
                g_dlc_dupes);
     return moved;
@@ -2973,7 +3009,7 @@ static int catalog_update(catalog_t *cat, const char *root, int fresh) {
      * the same, but without saying so: only a ps4 folder or a pkg announces the scan. */
     int announce = fresh && g_manual_scan && (has_candidates(root) || has_pkg(root));
     if (announce)
-        notify(TR("Scanning %s for PS4 games...", "Buscando juegos de PS4 en %s..."), root_label(root));
+        notify(TR("Scanning %s for PS4 games...", "Buscando juegos de PS4 en %s...", "%s üzerinde PS4 oyunları aranıyor..."), root_label(root));
     int before = cat->npkgs;
     g_walk_root = root;
     g_walk_restored = exists(RESTORED_LIST);
@@ -2998,7 +3034,7 @@ static int catalog_update(catalog_t *cat, const char *root, int fresh) {
     }
     catalog_group(cat, NULL);
     if (announce && !cat->ngames) /* say so, as the ps4 folder scan does */
-        notify(TR("%s: no PS4 games found", "%s: no se encontraron juegos de PS4"), root_label(root));
+        notify(TR("%s: no PS4 games found", "%s: no se encontraron juegos de PS4", "%s: PS4 oyunu bulunamadı"), root_label(root));
     return cat->ngames > 0;
 }
 
@@ -3031,12 +3067,12 @@ static void scan_root(const char *root, int fresh, int reconnected) {
         return;
     }
     if (fresh && g_manual_scan && !in_place(root))
-        notify(TR("Scanning %s for PS4 games...", "Buscando juegos de PS4 en %s..."), label);
+        notify(TR("Scanning %s for PS4 games...", "Buscando juegos de PS4 en %s...", "%s üzerinde PS4 oyunları aranıyor..."), label);
     if (reconnected)
         clear_removed_dlc();
     int moved = in_place(root) ? 0 : adopt_root_pkgs(root);
     if (moved && !fresh)
-        notify(TR("%s: %d new package(s) found", "%s: %d pkg(s) nuevo(s) encontrado(s)"), label, moved);
+        notify(TR("%s: %d new package(s) found", "%s: %d pkg(s) nuevo(s) encontrado(s)", "%s: %d yeni paket bulundu"), label, moved);
     static title_t titles[MAX_TITLES];
     static char tids[MAX_TITLES][10];
     int count = 0, pending = 0;
@@ -3067,12 +3103,13 @@ static void scan_root(const char *root, int fresh, int reconnected) {
     }
     /* the totals for a scan asked in the panel; otherwise only what changed */
     if (fresh && g_manual_scan && !count)
-        notify(TR("%s: no PS4 games found", "%s: no se encontraron juegos de PS4"), label);
+        notify(TR("%s: no PS4 games found", "%s: no se encontraron juegos de PS4", "%s: PS4 oyunu bulunamadı"), label);
     else if (fresh && g_manual_scan)
-        notify(TR("%s: %d PS4 game(s) found, %d new or updated", "%s: %d juego(s) de PS4 encontrado(s), %d nuevo(s) o actualizado(s)"),
+        notify(TR("%s: %d PS4 game(s) found, %d new or updated", "%s: %d juego(s) de PS4 encontrado(s), %d nuevo(s) o actualizado(s)",
+                  "%s: %d PS4 oyunu bulundu, %d yeni ya da güncellenmiş"),
                label, count, pending);
     else if (pending)
-        notify(TR("%s: %d new or updated PS4 game(s)", "%s: %d juego(s) de PS4 nuevo(s) o actualizado(s)"), label, pending);
+        notify(TR("%s: %d new or updated PS4 game(s)", "%s: %d juego(s) de PS4 nuevo(s) o actualizado(s)", "%s: %d yeni ya da güncellenmiş PS4 oyunu"), label, pending);
     /* games already in the library: keep them mounted */
     for (int i = 0; i < count; i++) {
         if (g_stop)
@@ -3089,7 +3126,8 @@ static void scan_root(const char *root, int fresh, int reconnected) {
         const char *rv = db_app_ver(t->tid);
         if (rv && *rv && strcmp(rv, info->ver)) {
             char why[64];
-            snprintf(why, sizeof(why), TR("registered as %s, the update is %s", "registrado como %s, la actualización es %s"), rv,
+            snprintf(why, sizeof(why), TR("registered as %s, the update is %s", "registrado como %s, la actualización es %s",
+                                          "%s olarak kayıtlı, güncelleme ise %s"), rv,
                      info->ver);
             if (readd_queue(t->tid, why))
                 printf("[reg] %s: %s\n", t->tid, why);
@@ -3102,7 +3140,7 @@ static void scan_root(const char *root, int fresh, int reconnected) {
             m->running = 0; /* closed without a klog end event */
         }
         if (mount_info(info))
-            notify(TR("Failed to mount %s (%s)", "No se pudo montar %s (%s)"), info->name, t->tid);
+            notify(TR("Failed to mount %s (%s)", "No se pudo montar %s (%s)", "%s bağlanamadı (%s)"), info->name, t->tid);
     }
     if (!pending)
         return;
@@ -3113,7 +3151,8 @@ static void scan_root(const char *root, int fresh, int reconnected) {
     int groups = (pending + size - 1) / size, grouped = groups > 1, done = 0, ok = 0, group = 0;
     int restart = 0; /* added games that wait for a restart (also when an earlier load marked it) */
     if (grouped)
-        notify(TR("%s: adding %d PS4 games in %d groups of up to %d", "%s: añadiendo %d juego(s) de PS4 en %d grupo(s) de hasta %d"),
+        notify(TR("%s: adding %d PS4 games in %d groups of up to %d", "%s: añadiendo %d juego(s) de PS4 en %d grupo(s) de hasta %d",
+                  "%s: %d PS4 oyunu %d grupta (grup başına en fazla %d) ekleniyor"),
                label, pending, groups, size);
     int *members = malloc(sizeof(int) * (size_t)size);
     char (*ids)[10] = malloc(10 * (size_t)size);
@@ -3140,7 +3179,8 @@ static void scan_root(const char *root, int fresh, int reconnected) {
             buf_t names = {0};
             for (int k = 0; k < n; k++)
                 buf_printf(&names, "%s%s", k ? ", " : "", titles[members[k]].name);
-            notify(TR("Group %d/%d, adding %d-%d of %d: %.400s", "Grupo %d/%d, añadiendo %d-%d de %d: %.400s"), group, groups,
+            notify(TR("Group %d/%d, adding %d-%d of %d: %.400s", "Grupo %d/%d, añadiendo %d-%d de %d: %.400s",
+                      "Grup %d/%d, ekleniyor: %d-%d / %d: %.400s"), group, groups,
                    done + 1, done + n, pending,
                    names.data ? (const char *)names.data : "");
             buf_free(&names);
@@ -3157,14 +3197,15 @@ static void scan_root(const char *root, int fresh, int reconnected) {
             if (!grouped) {
                 char extra[64] = "";
                 if (t->ndlc)
-                    snprintf(extra, sizeof(extra), TR(" + %d add-on(s)", " + %d DLC"), t->ndlc);
-                notify(TR("Adding %d/%d: %s%s%s (%s)", "Añadiendo %d/%d: %s%s%s (%s)"), done + k + 1, pending, t->name,
-                       t->has_patch ? TR(" with update", " con actualización") : "", extra, t->tid);
+                    snprintf(extra, sizeof(extra), TR(" + %d add-on(s)", " + %d DLC", " + %d DLC"), t->ndlc);
+                notify(TR("Adding %d/%d: %s%s%s (%s)", "Añadiendo %d/%d: %s%s%s (%s)", "Ekleniyor %d/%d: %s%s%s (%s)"), done + k + 1, pending, t->name,
+                       t->has_patch ? TR(" with update", " con actualización", " güncellemeyle") : "", extra, t->tid);
             }
             if (src_open(&src, root, t->tid) || register_prepare(&src)) {
                 if (retry_failed(t->tid))
                     notify(TR("Failed to add %s (%s), it is tried again every few minutes",
-                              "No se pudo añadir %s (%s), se vuelve a intentar cada pocos minutos"),
+                              "No se pudo añadir %s (%s), se vuelve a intentar cada pocos minutos",
+                              "%s eklenemedi (%s), birkaç dakikada bir yeniden denenir"),
                            t->name, t->tid);
             } else {
                 prepared[k] = 1;
@@ -3191,7 +3232,8 @@ static void scan_root(const char *root, int fresh, int reconnected) {
                     retry_clear(t->tid);
                 } else if (first) {
                     notify(TR("Failed to add %s (%s), it is tried again every few minutes",
-                              "No se pudo añadir %s (%s), se vuelve a intentar cada pocos minutos"),
+                              "No se pudo añadir %s (%s), se vuelve a intentar cada pocos minutos",
+                              "%s eklenemedi (%s), birkaç dakikada bir yeniden denenir"),
                            t->name, t->tid);
                 }
             } else {
@@ -3200,10 +3242,11 @@ static void scan_root(const char *root, int fresh, int reconnected) {
                 int reboot = needs_reboot(t->tid);
                 restart += reboot;
                 if (!grouped && reboot)
-                    notify(TR("%s added. Restart the console once to play it", "%s añadido. Reinicia la consola una vez para jugarlo"),
+                    notify(TR("%s added. Restart the console once to play it", "%s añadido. Reinicia la consola una vez para jugarlo",
+                              "%s eklendi. Oynamak için konsolu bir kez yeniden başlat"),
                            t->name);
                 else if (!grouped)
-                    notify(TR("%s ready to play", "%s listo para jugar"), t->name);
+                    notify(TR("%s ready to play", "%s listo para jugar", "%s oynamaya hazır"), t->name);
             }
             src_close(&src);
         }
@@ -3213,10 +3256,11 @@ static void scan_root(const char *root, int fresh, int reconnected) {
     free(ids);
     free(prepared);
     if (pending > 1)
-        notify(TR("%s: %d of %d game(s) added%s", "%s: %d de %d juego(s) añadido(s)%s"), label, ok, pending,
+        notify(TR("%s: %d of %d game(s) added%s", "%s: %d de %d juego(s) añadido(s)%s", "%s: %d / %d oyun eklendi%s"), label, ok, pending,
                restart           ? TR(". Restart the console once to play the new ones",
-                                      ". Reinicia la consola una vez para jugar los nuevos")
-               : ok == pending ? TR(", ready to play", ", listos para jugar")
+                                      ". Reinicia la consola una vez para jugar los nuevos",
+                                      ". Yenileri oynamak için konsolu bir kez yeniden başlat")
+               : ok == pending ? TR(", ready to play", ", listos para jugar", ", oynamaya hazır")
                                : "");
 }
 
@@ -3540,7 +3584,8 @@ static void open_failed(const char *tid) {
     char dir[PATH_MAX], drive[32], name[128];
     if (offline_game(tid, dir, sizeof(dir), drive, sizeof(drive), name, sizeof(name)))
         notify(TR("%s is on %s, which is not connected. Connect it and start the game again",
-                  "%s está en %s, que no está conectado. Conéctalo y vuelve a abrir el juego"),
+                  "%s está en %s, que no está conectado. Conéctalo y vuelve a abrir el juego",
+                  "%s, takılı olmayan %s üzerinde. Sürücüyü tak ve oyunu yeniden başlat"),
                name, drive);
 }
 
@@ -3558,7 +3603,7 @@ static void disagree_seen(const char *tid) {
         title_patch_path(root, tid, patch, sizeof(patch));
     if (patch[0])
         refuse_patch(tid, patch, m->name);
-    if (readd_queue(tid, TR("the system found another version", "el sistema encontró otra versión"))) {
+    if (readd_queue(tid, TR("the system found another version", "el sistema encontró otra versión", "sistem başka bir sürüm buldu"))) {
         g_readd_badpatch = patch[0] != 0;
         snprintf(g_readd_patch, sizeof(g_readd_patch), "%s", patch);
     }
@@ -3631,7 +3676,7 @@ static int delete_game_files(const char *dir, const char *tid, const char *name)
         rm_tree(dir);
         printf("[delete] %s: %s deleted (%llu bytes)\n", tid, dir, n);
         /* GB of 1024 MB, as the panel and the console's own screens count */
-        notify(TR("%s deleted: %.1f GB freed on %s", "%s borrado: %.1f GB liberados en %s"), name,
+        notify(TR("%s deleted: %.1f GB freed on %s", "%s borrado: %.1f GB liberados en %s", "%s silindi: %.1f GB boşaldı (%s)"), name,
                (double)n / 1073741824.0, root_label(root));
         return 1;
     }
@@ -3707,8 +3752,10 @@ static void handle_klog_line(const char *line) {
         snprintf(id, sizeof(id), "%.9s", p);
         printf("[game] %s ended with an application error\n", id);
         managed_t *m = managed_by(id, NULL);
-        if (m)
+        if (m) {
             m->running = 0;
+            saves_soon();
+        }
     } else if ((p = after(line, "Suspending the app has been timed out. ("))) {
         snprintf(id, sizeof(id), "%.9s", p);
         printf("[game] %s did not suspend in time: the system closes it (unsaved progress is lost)\n", id);
@@ -3744,6 +3791,7 @@ static void handle_klog_line(const char *line) {
         managed_t *m = managed_by(id, NULL);
         if (m) {
             m->running = 0;
+            saves_soon();
             if (g_deleting) {
                 /* closed by a delete: take the folder away before the uninstall runs */
                 unmount_title(m->tid, m->dlc_tids, m->ndlc_tids);
@@ -4001,14 +4049,14 @@ static int app_art(const char *tid, const char *name, uint32_t id, buf_t *out) {
 int app_add(const char *tid, char *msg, size_t cap) {
     char rm[64], root[PATH_MAX];
     if (find_root(tid, root, sizeof(root))) {
-        snprintf(msg, cap, TR("%s is not on any connected drive", "%s no está en ninguna unidad conectada"), tid);
+        snprintf(msg, cap, TR("%s is not on any connected drive", "%s no está en ninguna unidad conectada", "%s takılı hiçbir sürücüde yok"), tid);
         return -1;
     }
     snprintf(rm, sizeof(rm), STATE_DIR "/%s.removed", tid);
     unlink(rm);
     clear_removed_dlc();
     g_next_scan = 0;
-    snprintf(msg, cap, TR("Adding %s to the library", "Añadiendo %s a la biblioteca"), tid);
+    snprintf(msg, cap, TR("Adding %s to the library", "Añadiendo %s a la biblioteca", "%s kütüphaneye ekleniyor"), tid);
     return 0;
 }
 
@@ -4054,7 +4102,7 @@ int app_remove(const char *tid, char *msg, size_t cap) {
     managed_t *m = managed_by(tid, NULL);
     if ((m && m->running) || title_running(tid)) {
         printf("[web] remove %s refused: game running\n", tid);
-        snprintf(msg, cap, "%s", TR("Close the game before removing it", "Cierra el juego antes de quitarlo"));
+        snprintf(msg, cap, "%s", TR("Close the game before removing it", "Cierra el juego antes de quitarlo", "Kaldırmadan önce oyunu kapat"));
         return -1;
     }
     if (m)
@@ -4066,7 +4114,8 @@ int app_remove(const char *tid, char *msg, size_t cap) {
     snprintf(b, sizeof(b), "/user/patch/%s", tid);
     if (mounted_from(a, NULL, 0) || mounted_from(b, NULL, 0)) {
         /* never let the system uninstall run while the USB folder is reachable */
-        snprintf(msg, cap, TR("Could not unmount %s; nothing was removed", "No se pudo desmontar %s; no se quitó nada"), tid);
+        snprintf(msg, cap, TR("Could not unmount %s; nothing was removed", "No se pudo desmontar %s; no se quitó nada",
+                              "%s ayrılamadı; hiçbir şey kaldırılmadı"), tid);
         return -1;
     }
     char path[64];
@@ -4087,13 +4136,15 @@ int app_remove(const char *tid, char *msg, size_t cap) {
     if (rc == -2)
         snprintf(msg, cap,
                  TR("The system did not finish removing %s yet; try again in a moment",
-                    "El sistema aún no terminó de quitar %s; inténtalo de nuevo en un momento"),
+                    "El sistema aún no terminó de quitar %s; inténtalo de nuevo en un momento",
+                    "Sistem %s kaldırma işini henüz bitirmedi; biraz sonra tekrar dene"),
                  tid);
     else
         snprintf(msg, cap,
-                 rc ? TR("Failed to remove %s (0x%08x)", "No se pudo quitar %s (0x%08x)")
+                 rc ? TR("Failed to remove %s (0x%08x)", "No se pudo quitar %s (0x%08x)", "%s kaldırılamadı (0x%08x)")
                     : TR("%s removed from the library. Its pkgs stay where they are.",
-                         "%s quitado de la biblioteca. Sus pkgs se quedan donde están."),
+                         "%s quitado de la biblioteca. Sus pkgs se quedan donde están.",
+                         "%s kütüphaneden kaldırıldı. Pkg'leri yerinde kalır."),
                  tid, rc);
     return rc ? -1 : 0;
 }
@@ -4106,7 +4157,7 @@ static void readd_title(const char *tid) {
     if (g_nreadd_done < MAX_TITLES)
         snprintf(g_readd_done[g_nreadd_done++], 10, "%s", tid);
     pump_events(5000); /* let the system finish the refused launch */
-    notify(TR("%s (%s): adding it to the library again", "%s (%s): volviendo a añadirlo a la biblioteca"), name,
+    notify(TR("%s (%s): adding it to the library again", "%s (%s): volviendo a añadirlo a la biblioteca", "%s (%s): kütüphaneye yeniden ekleniyor"), name,
            g_readd_why);
     int rc = app_remove(tid, msg, sizeof(msg));
     printf("[reg] %s: removed to add it again: %s\n", tid, msg);
@@ -4366,7 +4417,8 @@ static int close_open_games(void) {
         return 0;
     for (int i = 0; i < n && i < 8; i++) {
         managed_t *m = managed_by(tids[i], NULL);
-        notify(TR("Closing %s to restore its original files", "Cerrando %s para restaurar sus archivos originales"), m ? m->name : tids[i]);
+        notify(TR("Closing %s to restore its original files", "Cerrando %s para restaurar sus archivos originales",
+                  "Orijinal dosyaları geri getirmek için %s kapatılıyor"), m ? m->name : tids[i]);
         int rc = sceSystemServiceKillApp(ids[i], -1, 0, 0);
         printf("[restore] close %s (app 0x%08x): 0x%08x\n", tids[i], ids[i], rc);
     }
@@ -4443,19 +4495,22 @@ static void run_restore(char (*only)[10], int nonly, int remember) {
     static restore_item_t items[MAX_TITLES];
     int n = restore_collect(only, nonly, items, MAX_TITLES), moved = 0, failed = 0, done = 0, kept = 0;
     if (!n) {
-        notify("%s", TR("No PS4Mount games to restore", "No hay juegos de PS4Mount que restaurar"));
+        notify("%s", TR("No PS4Mount games to restore", "No hay juegos de PS4Mount que restaurar", "Geri getirilecek PS4Mount oyunu yok"));
         return;
     }
     if (close_open_games()) {
-        notify("%s", TR("The open game did not close; no files were restored", "El juego abierto no se cerró; no se restauró ningún archivo"));
+        notify("%s", TR("The open game did not close; no files were restored", "El juego abierto no se cerró; no se restauró ningún archivo",
+                        "Açık oyun kapanmadı; hiçbir dosya geri getirilmedi"));
         return;
     }
     int size = g_cfg.restore_batch;
     if (n == 1)
-        notify(TR("Restoring the original files of %s...", "Restaurando los archivos originales de %s..."), items[0].name);
+        notify(TR("Restoring the original files of %s...", "Restaurando los archivos originales de %s...",
+                  "%s orijinal dosyaları geri getiriliyor..."), items[0].name);
     else
         notify(TR("Restoring the original files of %d game(s), %d at a time...",
-                  "Restaurando los archivos originales de %d juego(s), en grupos de %d..."),
+                  "Restaurando los archivos originales de %d juego(s), en grupos de %d...",
+                  "%d oyunun orijinal dosyaları her seferde %d tane geri getiriliyor..."),
                n, size);
     for (int i = 0; i < n; i += size) {
         if (i)
@@ -4480,13 +4535,17 @@ static void run_restore(char (*only)[10], int nonly, int remember) {
     clear_removed_dlc();
     g_next_scan = 0;
     if (n == 1 && done)
-        notify(TR("%s: %d pkg file(s) restored%s", "%s: %d pkg(s) restaurado(s)%s"), items[0].name, moved,
-               failed ? TR(", some could not be moved (see the log)", ", algunos no se pudieron mover (ver el log)") : "");
+        notify(TR("%s: %d pkg file(s) restored%s", "%s: %d pkg(s) restaurado(s)%s", "%s: %d pkg dosyası geri getirildi%s"), items[0].name, moved,
+               failed ? TR(", some could not be moved (see the log)", ", algunos no se pudieron mover (ver el log)",
+                           ", bazıları taşınamadı (günlüğe bak)") : "");
     else if (n > 1)
-        notify(TR("%d pkg file(s) of %d game(s) restored%s%s", "%d pkg(s) de %d juego(s) restaurado(s)%s%s"), moved, done,
-               failed ? TR(", some could not be moved (see the log)", ", algunos no se pudieron mover (ver el log)") : "",
+        notify(TR("%d pkg file(s) of %d game(s) restored%s%s", "%d pkg(s) de %d juego(s) restaurado(s)%s%s",
+                  "%d pkg dosyası (%d oyun) geri getirildi%s%s"), moved, done,
+               failed ? TR(", some could not be moved (see the log)", ", algunos no se pudieron mover (ver el log)",
+                           ", bazıları taşınamadı (günlüğe bak)") : "",
                kept ? TR(", some games could not leave the library (see the log)",
-                         ", algunos juegos no pudieron salir de la biblioteca (ver el log)")
+                         ", algunos juegos no pudieron salir de la biblioteca (ver el log)",
+                         ", bazı oyunlar kütüphaneden çıkamadı (günlüğe bak)")
                     : "");
 }
 
@@ -4547,7 +4606,8 @@ static void migrate_organized(void) {
     if (!n)
         return;
     notify(TR("Organize is off: moving the pkgs of %d game(s) back where they were",
-              "Organizar está apagado: devolviendo los pkgs de %d juego(s) a donde estaban"),
+              "Organizar está apagado: devolviendo los pkgs de %d juego(s) a donde estaban",
+              "Düzenleme kapalı: %d oyunun pkg'leri eski yerlerine taşınıyor"),
            n);
     run_restore(tids, n, 0);
 }
@@ -4557,18 +4617,21 @@ int app_restore(const char *tids, char *msg, size_t cap) {
         /* Nothing was moved or renamed: the pkgs are the user's, where they are. */
         snprintf(msg, cap, "%s",
                  TR("Pkgs are used where they are, with their own names: there are no original files to restore",
-                    "Los pkg se usan donde están, con sus propios nombres: no hay archivos originales que restaurar"));
+                    "Los pkg se usan donde están, con sus propios nombres: no hay archivos originales que restaurar",
+                    "Pkg'ler kendi adlarıyla bulundukları yerde kullanılıyor: geri getirilecek orijinal dosya yok"));
         return -1;
     }
     if (g_restore_all || g_restore_n) {
-        snprintf(msg, cap, "%s", TR("Already restoring files, wait for it to finish", "Ya se están restaurando archivos, espera a que termine"));
+        snprintf(msg, cap, "%s", TR("Already restoring files, wait for it to finish", "Ya se están restaurando archivos, espera a que termine",
+                                    "Dosyalar zaten geri getiriliyor, bitmesini bekle"));
         return -1;
     }
     if (!tids) {
         g_restore_all = 1;
         snprintf(msg, cap, "%s",
                  TR("Closing the open game and restoring the original files of all games",
-                    "Cerrando el juego abierto y restaurando los archivos originales de todos los juegos"));
+                    "Cerrando el juego abierto y restaurando los archivos originales de todos los juegos",
+                    "Açık oyun kapatılıyor ve tüm oyunların orijinal dosyaları geri getiriliyor"));
         return 0;
     }
     int n = 0;
@@ -4581,7 +4644,7 @@ int app_restore(const char *tids, char *msg, size_t cap) {
         }
         snprintf(tid, sizeof(tid), "%.9s", p);
         if (find_root(tid, root, sizeof(root))) {
-            snprintf(msg, cap, TR("%s is not on any connected drive", "%s no está en ninguna unidad conectada"), tid);
+            snprintf(msg, cap, TR("%s is not on any connected drive", "%s no está en ninguna unidad conectada", "%s takılı hiçbir sürücüde yok"), tid);
             return -1;
         }
         int dup = 0;
@@ -4594,19 +4657,21 @@ int app_restore(const char *tids, char *msg, size_t cap) {
             p++;
     }
     if (!n) {
-        snprintf(msg, cap, "%s", TR("No games selected", "No hay juegos seleccionados"));
+        snprintf(msg, cap, "%s", TR("No games selected", "No hay juegos seleccionados", "Seçili oyun yok"));
         return -1;
     }
     g_restore_n = n;
     if (n == 1)
         snprintf(msg, cap,
                  TR("Closing the open game and restoring the original files of %s",
-                    "Cerrando el juego abierto y restaurando los archivos originales de %s"),
+                    "Cerrando el juego abierto y restaurando los archivos originales de %s",
+                    "Açık oyun kapatılıyor ve %s orijinal dosyaları geri getiriliyor"),
                  g_restore_tids[0]);
     else
         snprintf(msg, cap,
                  TR("Closing the open game and restoring the original files of %d games, %d at a time",
-                    "Cerrando el juego abierto y restaurando los archivos originales de %d juego(s), en grupos de %d"),
+                    "Cerrando el juego abierto y restaurando los archivos originales de %d juego(s), en grupos de %d",
+                    "Açık oyun kapatılıyor ve %d oyunun orijinal dosyaları her seferde %d tane geri getiriliyor"),
                  n, g_cfg.restore_batch);
     return 0;
 }
@@ -4614,7 +4679,8 @@ int app_restore(const char *tids, char *msg, size_t cap) {
 int app_restored_forget(char *msg, size_t cap) {
     unlink(RESTORED_LIST);
     g_next_scan = 0;
-    snprintf(msg, cap, "%s", TR("Restored pkgs will be used again on the next scan", "Los pkgs restaurados se volverán a usar en la próxima búsqueda"));
+    snprintf(msg, cap, "%s", TR("Restored pkgs will be used again on the next scan", "Los pkgs restaurados se volverán a usar en la próxima búsqueda",
+                                "Geri getirilen pkg'ler bir sonraki taramada yeniden kullanılacak"));
     return 0;
 }
 
@@ -4630,22 +4696,24 @@ static int clean_scan_path(const char *in, char *out, size_t n, char *why, size_
     while (l && (out[l - 1] == ' ' || out[l - 1] == '/' || out[l - 1] == '\r'))
         out[--l] = 0;
     if (l >= 120) {
-        snprintf(why, wn, TR("folder name too long: %.40s...", "nombre de carpeta demasiado largo: %.40s..."), out);
+        snprintf(why, wn, TR("folder name too long: %.40s...", "nombre de carpeta demasiado largo: %.40s...", "klasör adı çok uzun: %.40s..."), out);
         return -1;
     }
     if (strchr(out, '\\') || strchr(out, ':') || strstr(out, "//")) {
-        snprintf(why, wn, TR("invalid folder: %s", "carpeta no válida: %s"), out);
+        snprintf(why, wn, TR("invalid folder: %s", "carpeta no válida: %s", "geçersiz klasör: %s"), out);
         return -1;
     }
     for (const char *c = out; *c; c = strchr(c, '/') ? strchr(c, '/') + 1 : c + strlen(c))
         if (!strncmp(c, "..", 2) && (c[2] == '/' || !c[2])) {
-            snprintf(why, wn, TR("folders outside the drive are not allowed: %s", "no se permiten carpetas fuera de la unidad: %s"), out);
+            snprintf(why, wn, TR("folders outside the drive are not allowed: %s", "no se permiten carpetas fuera de la unidad: %s",
+                                 "sürücü dışındaki klasörlere izin yok: %s"), out);
             return -1;
         }
     if (!strncasecmp(out, "ps4", 3) && (!out[3] || out[3] == '/')) {
         snprintf(why, wn, "%s",
                  TR("the ps4 folder holds the games PS4Mount already moved; choose another folder",
-                    "la carpeta ps4 guarda los juegos que PS4Mount ya movió; elige otra carpeta"));
+                    "la carpeta ps4 guarda los juegos que PS4Mount ya movió; elige otra carpeta",
+                    "ps4 klasöründe PS4Mount'un daha önce taşıdığı oyunlar var; başka bir klasör seç"));
         return -1;
     }
     return 0;
@@ -4709,7 +4777,7 @@ static void nas_apply(int force) {
         /* The first seconds after a boot the share can fail before the console
          * is ready: only tell the player when it keeps failing. */
         if (!g_nas_told && now - g_nas_fail_at >= 120) {
-            notify(TR("NAS: %s", "NAS: %s"), err);
+            notify(TR("NAS: %s", "NAS: %s", "NAS: %s"), err);
             g_nas_told = 1;
         }
         g_nas_on = 0;
@@ -4753,6 +4821,7 @@ static void config_save(void) {
                g_cfg.nas, g_cfg.nas_proto, g_cfg.nas_port, g_cfg.nas_server, g_cfg.nas_share,
                g_cfg.nas_sub, g_cfg.nas_user, g_cfg.nas_pass);
     buf_printf(&b, "nas_rescan=%d\n", g_cfg.nas_rescan);
+    buf_printf(&b, "saves=%d\nsaves_keep=%d\nreserve_gb=%d\n", g_cfg.saves, g_cfg.saves_keep, g_cfg.reserve_gb);
     for (int i = 0; i < g_cfg.npaths; i++)
         buf_printf(&b, "path=%s\n", g_cfg.paths[i]);
     write_file(CONFIG_PATH, b.data, b.len, 0666);
@@ -4813,8 +4882,18 @@ static void config_load(void) {
             snprintf(c.nas_user, sizeof(c.nas_user), "%s", line + 9);
         else if (!strncmp(line, "nas_pass=", 9))
             snprintf(c.nas_pass, sizeof(c.nas_pass), "%s", line + 9);
+        else if (!strncmp(line, "saves=", 6))
+            c.saves = atoi(line + 6) != 0;
+        else if (!strncmp(line, "saves_keep=", 11))
+            c.saves_keep = atoi(line + 11);
+        else if (!strncmp(line, "reserve_gb=", 11))
+            c.reserve_gb = atoi(line + 11);
     }
     fclose(f);
+    if (c.saves_keep < 1 || c.saves_keep > SAVES_KEEP_MAX)
+        c.saves_keep = 10;
+    if (c.reserve_gb < 0 || c.reserve_gb > RESERVE_GB_MAX)
+        c.reserve_gb = 2;
     if (c.batch_size < 1 || c.batch_size > 50)
         c.batch_size = 5;
     if (c.restore_batch < 1 || c.restore_batch > MAX_RESTORE_BATCH)
@@ -4830,8 +4909,9 @@ static void config_load(void) {
     if (ver < 2)
         c.organize = 1;
     g_cfg = c;
-    printf("[config] batch=%d batch_size=%d dlc=%d restore_batch=%d organize=%d folders=%d\n", g_cfg.batch, g_cfg.batch_size,
-           g_cfg.dlc, g_cfg.restore_batch, g_cfg.organize, g_cfg.npaths);
+    printf("[config] batch=%d batch_size=%d dlc=%d restore_batch=%d organize=%d folders=%d saves=%d/%d reserve=%d GB\n",
+           g_cfg.batch, g_cfg.batch_size, g_cfg.dlc, g_cfg.restore_batch, g_cfg.organize, g_cfg.npaths, g_cfg.saves,
+           g_cfg.saves_keep, g_cfg.reserve_gb);
 }
 
 void app_config_json(buf_t *out) {
@@ -4855,6 +4935,8 @@ void app_config_json(buf_t *out) {
     buf_printf(out, ",\"nas_has_pass\":%s,\"nas_reload\":%s,\"nas_status\":",
                g_cfg.nas_pass[0] ? "true" : "false", nas_need_reload() ? "true" : "false");
     json_str(out, nas_status());
+    buf_printf(out, ",\"saves\":%s,\"saves_keep\":%d,\"saves_keep_max\":%d,\"reserve_gb\":%d,\"reserve_gb_max\":%d",
+               g_cfg.saves ? "true" : "false", g_cfg.saves_keep, SAVES_KEEP_MAX, g_cfg.reserve_gb, RESERVE_GB_MAX);
     buf_printf(out, ",\"paths\":[");
     for (int i = 0; i < g_cfg.npaths; i++) {
         char shown[130];
@@ -4929,7 +5011,7 @@ void app_nas_shares_json(const char *body, buf_t *out) {
     char err[192] = "";
     int k = !nas_supported() ? -1 : c.server[0] ? nas_shares(&c, names, 64, err, sizeof(err)) : -1;
     if (k < 0 && !err[0])
-        snprintf(err, sizeof(err), "%s", TR("no server given", "falta el servidor"));
+        snprintf(err, sizeof(err), "%s", TR("no server given", "falta el servidor", "sunucu belirtilmedi"));
     buf_printf(out, "{\"ok\":%s,\"auth\":%s,\"message\":", k >= 0 ? "true" : "false", k == -2 ? "true" : "false");
     json_str(out, k >= 0 ? "" : err);
     buf_printf(out, ",\"shares\":[");
@@ -4978,6 +5060,17 @@ int app_config_set(const char *body, char *msg, size_t cap) {
                 c.nas_port = atoi(value);
             else if (k == 10 && !strncmp(p, "nas_rescan", 10))
                 c.nas_rescan = atoi(value);
+            else if (k == 5 && !strncmp(p, "saves", 5))
+                c.saves = atoi(value) != 0;
+            else if (k == 10 && !strncmp(p, "saves_keep", 10)) {
+                char *end;
+                long v = strtol(value, &end, 10);
+                c.saves_keep = *value && !*end ? (int)v : 0;
+            } else if (k == 10 && !strncmp(p, "reserve_gb", 10)) {
+                char *end;
+                long v = strtol(value, &end, 10);
+                c.reserve_gb = *value && !*end ? (int)v : -1;
+            }
             else if (k == 10 && !strncmp(p, "nas_server", 10))
                 snprintf(c.nas_server, sizeof(c.nas_server), "%s", value);
             else if (k == 9 && !strncmp(p, "nas_share", 9))
@@ -4994,7 +5087,7 @@ int app_config_set(const char *body, char *msg, size_t cap) {
                 for (char *line = strtok(value, "\n"); line; line = strtok(NULL, "\n")) {
                     char path[128];
                     if (clean_scan_path(line, path, sizeof(path), why, sizeof(why))) {
-                        snprintf(msg, cap, TR("Not saved: %s", "No se guardó: %s"), why);
+                        snprintf(msg, cap, TR("Not saved: %s", "No se guardó: %s", "Kaydedilmedi: %s"), why);
                         return -1;
                     }
                     int dup = 0;
@@ -5003,7 +5096,8 @@ int app_config_set(const char *body, char *msg, size_t cap) {
                     if (dup)
                         continue;
                     if (c.npaths == MAX_SCAN_PATHS) {
-                        snprintf(msg, cap, TR("Not saved: at most %d folders", "No se guardó: como máximo %d carpetas"), MAX_SCAN_PATHS);
+                        snprintf(msg, cap, TR("Not saved: at most %d folders", "No se guardó: como máximo %d carpetas",
+                                              "Kaydedilmedi: en fazla %d klasör"), MAX_SCAN_PATHS);
                         return -1;
                     }
                     snprintf(c.paths[c.npaths++], sizeof(c.paths[0]), "%s", path);
@@ -5013,18 +5107,37 @@ int app_config_set(const char *body, char *msg, size_t cap) {
         p = amp ? amp + 1 : NULL;
     }
     if (c.batch_size < 1 || c.batch_size > 50) {
-        snprintf(msg, cap, "%s", TR("Not saved: games per group must be between 1 and 50", "No se guardó: los juegos por grupo deben estar entre 1 y 50"));
+        snprintf(msg, cap, "%s", TR("Not saved: games per group must be between 1 and 50", "No se guardó: los juegos por grupo deben estar entre 1 y 50",
+                                    "Kaydedilmedi: grup başına oyun 1 ile 50 arasında olmalı"));
         return -1;
     }
     if (c.restore_batch < 1 || c.restore_batch > MAX_RESTORE_BATCH) {
         snprintf(msg, cap,
                  TR("Not saved: games per group when moving back must be a number from 1 to %d",
-                    "No se guardó: los juegos por grupo al devolver deben ser un número de 1 a %d"),
+                    "No se guardó: los juegos por grupo al devolver deben ser un número de 1 a %d",
+                    "Kaydedilmedi: geri taşırken grup başına oyun 1 ile %d arasında bir sayı olmalı"),
                  MAX_RESTORE_BATCH);
         return -1;
     }
     if (!c.npaths) {
-        snprintf(msg, cap, "%s", TR("Not saved: add at least one folder (/ is the drive root)", "No se guardó: añade al menos una carpeta (/ es la raíz de la unidad)"));
+        snprintf(msg, cap, "%s", TR("Not saved: add at least one folder (/ is the drive root)", "No se guardó: añade al menos una carpeta (/ es la raíz de la unidad)",
+                                    "Kaydedilmedi: en az bir klasör ekle (/ sürücünün köküdür)"));
+        return -1;
+    }
+    if (c.saves_keep < 1 || c.saves_keep > SAVES_KEEP_MAX) {
+        snprintf(msg, cap,
+                 TR("Not saved: the copies of saves kept must be a number from 1 to %d",
+                    "No se guardó: las copias de partidas que se guardan deben ser un número de 1 a %d",
+                    "Kaydedilmedi: saklanacak kayıt kopyası sayısı 1 ile %d arasında olmalı"),
+                 SAVES_KEEP_MAX);
+        return -1;
+    }
+    if (c.reserve_gb < 0 || c.reserve_gb > RESERVE_GB_MAX) {
+        snprintf(msg, cap,
+                 TR("Not saved: the space kept free on the console must be a number from 0 to %d GB",
+                    "No se guardó: el espacio que se deja libre en la consola debe ser un número de 0 a %d GB",
+                    "Kaydedilmedi: konsolda boş bırakılacak alan 0 ile %d GB arasında olmalı"),
+                 RESERVE_GB_MAX);
         return -1;
     }
     /* NAS: only where the fusefs patch is known, read only, and never with the organizer. */
@@ -5034,22 +5147,26 @@ int app_config_set(const char *body, char *msg, size_t cap) {
     for (size_t l = strlen(sub); l && (sub[l - 1] == '/' || sub[l - 1] == '\\'); l--)
         sub[l - 1] = 0;
     if (c.nas && !nas_supported()) {
-        snprintf(msg, cap, "%s", TR("Not saved: there is no NAS on this firmware", "No se guardó: no hay NAS en este firmware"));
+        snprintf(msg, cap, "%s", TR("Not saved: there is no NAS on this firmware", "No se guardó: no hay NAS en este firmware",
+                                    "Kaydedilmedi: bu yazılım sürümünde NAS yok"));
         return -1;
     }
     if (c.nas && (!c.nas_server[0] || !c.nas_share[0])) {
         snprintf(msg, cap, "%s", TR("Not saved: the NAS needs a server and a share",
-                                    "No se guardó: el NAS necesita un servidor y un recurso"));
+                                    "No se guardó: el NAS necesita un servidor y un recurso",
+                                    "Kaydedilmedi: NAS için bir sunucu ve bir paylaşım gerekli"));
         return -1;
     }
     if (c.nas_rescan < 0 || c.nas_rescan > NAS_RESCAN_MAX) {
         snprintf(msg, cap, "%s", TR("Not saved: the share check interval is out of range",
-                                    "No se guardó: el intervalo de revisión del NAS no es válido"));
+                                    "No se guardó: el intervalo de revisión del NAS no es válido",
+                                    "Kaydedilmedi: paylaşım kontrol aralığı geçersiz"));
         return -1;
     }
     if (c.nas_port < 0 || c.nas_port > 65535) {
         snprintf(msg, cap, "%s", TR("Not saved: the port must be between 1 and 65535",
-                                    "No se guardó: el puerto debe estar entre 1 y 65535"));
+                                    "No se guardó: el puerto debe estar entre 1 y 65535",
+                                    "Kaydedilmedi: port 1 ile 65535 arasında olmalı"));
         return -1;
     }
     int nas_changed = c.nas != g_cfg.nas || c.nas_proto != g_cfg.nas_proto ||
@@ -5059,8 +5176,8 @@ int app_config_set(const char *body, char *msg, size_t cap) {
     g_cfg = c;
     apply_lang();
     config_save();
-    printf("[config] saved: batch=%d batch_size=%d dlc=%d restore_batch=%d organize=%d folders=%d\n", c.batch,
-           c.batch_size, c.dlc, c.restore_batch, c.organize, c.npaths);
+    printf("[config] saved: batch=%d batch_size=%d dlc=%d restore_batch=%d organize=%d folders=%d saves=%d/%d reserve=%d GB\n",
+           c.batch, c.batch_size, c.dlc, c.restore_batch, c.organize, c.npaths, c.saves, c.saves_keep, c.reserve_gb);
     if (was_organize && !c.organize) /* turned off: send the organized games back to where they were */
         for (int i = 0; i < NROOTS; i++)
             g_migrated[i] = 0;
@@ -5068,11 +5185,225 @@ int app_config_set(const char *body, char *msg, size_t cap) {
         nas_apply(1);
     g_next_scan = 0;
     if (nas_changed && c.nas && !nas_active())
-        snprintf(msg, cap, TR("Saved, but the NAS did not connect: %s", "Guardado, pero el NAS no conectó: %s"),
+        snprintf(msg, cap, TR("Saved, but the NAS did not connect: %s", "Guardado, pero el NAS no conectó: %s", "Kaydedildi, ama NAS bağlanmadı: %s"),
                  nas_status());
     else
-        snprintf(msg, cap, "%s", TR("Settings saved", "Ajustes guardados"));
+        snprintf(msg, cap, "%s", TR("Settings saved", "Ajustes guardados", "Ayarlar kaydedildi"));
     return 0;
+}
+
+/* --- saves: a copy on a USB drive after each session --- */
+
+/* The saves the games use stay on the console (saves.h says why); after a game closes, its
+ * saves are copied to a USB drive when they changed, and the panel puts a copy back. */
+#define SAVES_LOOK_SECONDS 300 /* a look at the saves of the closed games */
+#define SAVES_AFTER_GAME 20    /* seconds after a game closed: the system unmounts its saves */
+#define SAVES_LAUNCH_GRACE 120 /* a launch seen in klog counts as open until the game shows */
+
+static int g_saves_busy; /* a copy runs: the panel's own requests wait for it */
+
+/* The fingerprint of the saves last copied, per game (STATE_DIR/<TID>.savefp). */
+static uint64_t saves_fp_saved(const char *tid) {
+    char path[64], buf[32] = {0};
+    snprintf(path, sizeof(path), STATE_DIR "/%s.savefp", tid);
+    int fd = open(path, O_RDONLY);
+    if (fd < 0)
+        return 0;
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    return n > 0 ? strtoull(buf, NULL, 16) : 0;
+}
+
+static void saves_fp_store(const char *tid, uint64_t fp) {
+    char path[64], buf[32];
+    snprintf(path, sizeof(path), STATE_DIR "/%s.savefp", tid);
+    int n = snprintf(buf, sizeof(buf), "%016llx\n", (unsigned long long)fp);
+    write_file(path, buf, (size_t)n, 0666);
+}
+
+/* The drive the saves of tid are copied to: the game's own when it is a USB drive, else the
+ * first USB drive connected (a share is read only, the console is where they are already). */
+static int saves_root(const char *tid, char *root, size_t n) {
+    char r[PATH_MAX];
+    if (!find_root(tid, r, sizeof(r)) && !strncmp(r, "/mnt/usb", 8)) {
+        snprintf(root, n, "%s", r);
+        return 0;
+    }
+    for (int i = 0; i < 8; i++) {
+        root_path(i, r, sizeof(r));
+        if (root_present(r)) {
+            snprintf(root, n, "%s", r);
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/* 1 while tid is open (also suspended), or was launched a moment ago. */
+static int saves_game_open(const char *tid) {
+    managed_t *m = managed_by(tid, NULL);
+    if (m && m->running && time(NULL) - m->running_since < SAVES_LAUNCH_GRACE)
+        return 1;
+    if (title_running(tid))
+        return 1;
+    uint32_t ids[8];
+    char tids[8][10];
+    int n = open_games(ids, tids, 8);
+    for (int i = 0; i < n && i < 8; i++)
+        if (!strcmp(tids[i], tid))
+            return 1;
+    return 0;
+}
+
+/* While files are copied: the panel and klog go on, and the console stays out of rest mode
+ * (which powers the USB drive off). */
+static void saves_pump_events(void) {
+    sceSystemServicePowerTick();
+    pump_now();
+}
+
+/* Copies the saves of tid when they changed since the last copy. 1 copied, 0 nothing to do,
+ * -1 failed (msg). */
+static int saves_copy_now(const char *tid, int force, char *msg, size_t cap) {
+    char root[PATH_MAX];
+    msg[0] = 0;
+    uint64_t fp = saves_fp(tid);
+    if (!fp) {
+        snprintf(msg, cap, "%s", TR("This game has no saves on the console yet", "Este juego aún no tiene partidas en la consola",
+                                    "Bu oyunun konsolda henüz kaydı yok"));
+        return 0;
+    }
+    if (!force && fp == saves_fp_saved(tid))
+        return 0;
+    if (saves_root(tid, root, sizeof(root))) {
+        snprintf(msg, cap, "%s", TR("No USB drive connected to copy the saves to", "No hay ningún USB conectado al que copiar las partidas",
+                                    "Kayıtların kopyalanacağı bir USB sürücü takılı değil"));
+        return -1;
+    }
+    sceSystemServicePowerTick();
+    g_saves_busy = 1;
+    int n = saves_backup(tid, root, NULL, g_cfg.saves_keep, NULL, msg, cap);
+    g_saves_busy = 0;
+    if (n <= 0)
+        return n < 0 ? -1 : 0;
+    saves_fp_store(tid, fp);
+    snprintf(msg, cap, TR("Saves copied to %s", "Partidas copiadas a %s", "Kayıtlar %s sürücüsüne kopyalandı"), root_label(root));
+    return 1;
+}
+
+/* From the main loop: the saves of the closed games of the library that changed are copied. */
+static void saves_tick(void) {
+    static uint64_t said_fail[MAX_TITLES]; /* a failure is said once per state of the saves */
+    if (!g_cfg.saves || g_saves_busy || g_deleting || time(NULL) < g_saves_next)
+        return;
+    g_saves_next = time(NULL) + SAVES_LOOK_SECONDS;
+    for (int i = 0; i < MAX_TITLES; i++) {
+        managed_t *m = &g_managed[i];
+        if (!m->used)
+            continue;
+        uint64_t fp = saves_fp(m->tid); /* a few stats: before the list of processes */
+        if (!fp || fp == saves_fp_saved(m->tid) || saves_game_open(m->tid))
+            continue;
+        char msg[512];
+        int rc = saves_copy_now(m->tid, 0, msg, sizeof(msg));
+        if (rc > 0) {
+            said_fail[i] = 0;
+            notify("%s: %s", m->name, msg);
+        } else if (rc < 0) {
+            printf("[saves] %s: %s\n", m->tid, msg);
+            if (said_fail[i] != fp)
+                notify(TR("%s: the saves were not copied: %s", "%s: no se copiaron las partidas: %s",
+                          "%s: kayıtlar kopyalanamadı: %s"), m->name, msg);
+            said_fail[i] = fp;
+        }
+        if (!g_cfg.saves) /* turned off in the panel meanwhile */
+            break;
+    }
+}
+
+/* A game closed (or ended with an error): a look at its saves shortly after. */
+static void saves_soon(void) {
+    time_t at = time(NULL) + SAVES_AFTER_GAME;
+    if (!g_saves_next || at < g_saves_next)
+        g_saves_next = at;
+}
+
+void app_saves_json(const char *tid, buf_t *out) {
+    char root[PATH_MAX] = "", label[64] = "";
+    uint64_t bytes = 0;
+    int users = saves_on_console(tid, &bytes), have = !saves_root(tid, root, sizeof(root));
+    if (have)
+        snprintf(label, sizeof(label), "%s", root_label(root));
+    buf_printf(out, "{\"enabled\":%s,\"open\":%s,\"busy\":%s,\"users\":%d,\"bytes\":%llu,\"copied\":%s,\"drive\":",
+               g_cfg.saves ? "true" : "false", saves_game_open(tid) ? "true" : "false", g_saves_busy ? "true" : "false", users,
+               (unsigned long long)bytes, users && saves_fp(tid) == saves_fp_saved(tid) ? "true" : "false");
+    json_str(out, label);
+    buf_printf(out, ",\"keep\":%d,\"copies\":[", g_cfg.saves_keep);
+    static save_copy_t copies[SAVES_MAX_COPIES];
+    int n = have ? saves_list(tid, root, copies, SAVES_MAX_COPIES) : 0;
+    for (int i = 0; i < n; i++) {
+        buf_printf(out, "%s{\"user\":", i ? "," : "");
+        json_str(out, copies[i].user);
+        buf_printf(out, ",\"stamp\":");
+        json_str(out, copies[i].stamp);
+        buf_printf(out, ",\"bytes\":%llu,\"files\":%d,\"before_restore\":%s}", (unsigned long long)copies[i].bytes,
+                   copies[i].files, copies[i].before_restore ? "true" : "false");
+    }
+    buf_printf(out, "]}");
+}
+
+int app_saves_backup(const char *tid, char *msg, size_t cap) {
+    if (!saves_valid_tid(tid)) {
+        snprintf(msg, cap, "invalid title_id");
+        return -1;
+    }
+    if (g_saves_busy) {
+        snprintf(msg, cap, "%s", TR("A copy of saves is being made: try again in a moment",
+                                    "Se está haciendo una copia de partidas: inténtalo en un momento",
+                                    "Şu anda kayıtlar kopyalanıyor: biraz sonra tekrar dene"));
+        return -1;
+    }
+    if (saves_game_open(tid)) {
+        snprintf(msg, cap, "%s", TR("Close the game first: its saves are copied while it is closed",
+                                    "Cierra antes el juego: sus partidas se copian con el juego cerrado",
+                                    "Önce oyunu kapat: kayıtlar oyun kapalıyken kopyalanır"));
+        return -1;
+    }
+    int rc = saves_copy_now(tid, 1, msg, cap);
+    return rc > 0 ? 0 : -1;
+}
+
+int app_saves_restore(const char *tid, const char *user, const char *stamp, char *msg, size_t cap) {
+    char root[PATH_MAX];
+    if (!saves_valid_tid(tid) || !saves_valid_user(user) || !saves_valid_stamp(stamp)) {
+        snprintf(msg, cap, "invalid copy");
+        return -1;
+    }
+    if (g_saves_busy) {
+        snprintf(msg, cap, "%s", TR("A copy of saves is being made: try again in a moment",
+                                    "Se está haciendo una copia de partidas: inténtalo en un momento",
+                                    "Şu anda kayıtlar kopyalanıyor: biraz sonra tekrar dene"));
+        return -1;
+    }
+    if (saves_game_open(tid)) {
+        snprintf(msg, cap, "%s", TR("Close the game first: saves are only put back with the game closed",
+                                    "Cierra antes el juego: las partidas solo se devuelven con el juego cerrado",
+                                    "Önce oyunu kapat: kayıtlar yalnızca oyun kapalıyken geri yüklenir"));
+        return -1;
+    }
+    if (saves_root(tid, root, sizeof(root))) {
+        snprintf(msg, cap, "%s", TR("Connect the USB drive with the copies first", "Conecta antes el USB con las copias",
+                                    "Önce kopyaların olduğu USB sürücüyü tak"));
+        return -1;
+    }
+    sceSystemServicePowerTick();
+    g_saves_busy = 1;
+    int n = saves_restore(tid, root, user, stamp, g_cfg.saves_keep, msg, cap);
+    g_saves_busy = 0;
+    if (n > 0) /* what the console has now is a copy already */
+        saves_fp_store(tid, saves_fp(tid));
+    printf("[saves] %s: put back %s/%s: %s\n", tid, user, stamp, msg);
+    return n > 0 ? 0 : -1;
 }
 
 /* --- pkgs sent from the panel --- */
@@ -5117,7 +5448,8 @@ static void dests_json(buf_t *out, uint64_t need) {
         if (!root_present(root) || is_nas(root)) /* read only: nothing is sent there */
             continue;
         scan_dir(dir, sizeof(dir), root, 0);
-        uint64_t fb = free_bytes(dir);
+        uint64_t fb = free_bytes(dir), reserve = is_internal(root) ? internal_reserve() : 0;
+        fb = fb > reserve ? fb - reserve : 0; /* the console: what the settings keep free is not offered */
         buf_printf(out, "%s{\"id\":", first ? "" : ",");
         json_str(out, root_id(root, id, sizeof(id)));
         buf_printf(out, ",\"label\":");
@@ -5136,12 +5468,14 @@ static void check_problem(const pkg_check_t *c, uint64_t size, char *problem, si
     if (!problem[0] && size && size != c->pkg_size)
         snprintf(problem, n,
                  TR("the file is %llu bytes but its header says %llu: it is incomplete or damaged",
-                    "el archivo tiene %llu bytes pero su cabecera dice %llu: está incompleto o dañado"),
+                    "el archivo tiene %llu bytes pero su cabecera dice %llu: está incompleto o dañado",
+                    "dosya %llu bayt ama başlığı %llu diyor: eksik ya da bozuk"),
                  (unsigned long long)size, (unsigned long long)c->pkg_size);
     if (!problem[0] && c->kind != PKG_KIND_ADDON && installed_internally(c->title_id))
         snprintf(problem, n,
                  TR("%s is installed on the console the normal way: PS4Mount leaves it alone",
-                    "%s está instalado en la consola de la forma normal: PS4Mount no lo toca"),
+                    "%s está instalado en la consola de la forma normal: PS4Mount no lo toca",
+                    "%s konsola normal yolla kurulu: PS4Mount ona dokunmaz"),
                  c->title_id);
 }
 
@@ -5152,7 +5486,7 @@ void app_check(const void *data, size_t len, uint64_t size, buf_t *out) {
     int rc = write_file(tmp, data, len, 0666) ? -1 : pkg_check(tmp, g_fw, &c);
     unlink(tmp);
     if (rc) {
-        buf_printf(out, "{\"ok\":false,\"problem\":\"%s\"}", TR("not a PS4 pkg", "no es un pkg de PS4"));
+        buf_printf(out, "{\"ok\":false,\"problem\":\"%s\"}", TR("not a PS4 pkg", "no es un pkg de PS4", "PS4 pkg'si değil"));
         return;
     }
     char problem[256], notes[3][200], sv[16], fw[16], where[32];
@@ -5163,15 +5497,18 @@ void app_check(const void *data, size_t len, uint64_t size, buf_t *out) {
     if (c.kind == PKG_KIND_ADDON && !g_cfg.dlc)
         snprintf(notes[nnotes++], sizeof(notes[0]), "%s",
                  TR("add-ons are turned off in the settings: it will wait in the folder",
-                    "los DLC están desactivados en los ajustes: esperará en la carpeta"));
+                    "los DLC están desactivados en los ajustes: esperará en la carpeta",
+                    "ayarlarda DLC'ler kapalı: klasörde bekleyecek"));
     if (c.kind == PKG_KIND_UPDATE && find_root(c.title_id, where, sizeof(where)) && !db_is_registered(c.title_id))
         snprintf(notes[nnotes++], sizeof(notes[0]), "%s",
                  TR("the game of this update is not on a drive yet: send it too",
-                    "el juego de esta actualización aún no está en ninguna unidad: envíalo también"));
+                    "el juego de esta actualización aún no está en ninguna unidad: envíalo también",
+                    "bu güncellemenin oyunu henüz bir sürücüde yok: onu da gönder"));
     if (c.kind == PKG_KIND_GAME && !find_root(c.title_id, where, sizeof(where)))
         snprintf(notes[nnotes++], sizeof(notes[0]),
                  TR("%s already has a game in %s: this copy will be left where it is",
-                    "%s ya tiene un juego en %s: esta copia se dejará donde está"),
+                    "%s ya tiene un juego en %s: esta copia se dejará donde está",
+                    "%s için %s içinde zaten bir oyun var: bu kopya olduğu yerde bırakılacak"),
                  c.title_id, root_label(where));
     ver_text(c.system_ver, sv, sizeof(sv));
     ver_text(g_fw, fw, sizeof(fw));
@@ -5259,10 +5596,12 @@ static void install_received(void) {
     printf("[install] %s: %s\n", path, msg);
     if (task < 0)
         notify(TR("%s could not be installed: the system's installer turned it down (see the log)",
-                  "%s no se pudo instalar: el instalador del sistema lo rechazó (mira el log)"),
+                  "%s no se pudo instalar: el instalador del sistema lo rechazó (mira el log)",
+                  "%s kurulamadı: sistemin yükleyicisi reddetti (günlüğe bak)"),
                title);
     else
-        notify(TR("Installing %s: it shows on the home screen when it is done", "Instalando %s: aparece en la pantalla de inicio cuando termine"),
+        notify(TR("Installing %s: it shows on the home screen when it is done", "Instalando %s: aparece en la pantalla de inicio cuando termine",
+                  "%s kuruluyor: bitince ana ekranda görünür"),
                title);
 }
 
@@ -5294,6 +5633,9 @@ static void install_cleanup(void) {
  * When the console does not have it, its pkg is downloaded from this version's release and
  * installed like an app sent with "Send and install"; a first start opens it. Once it was
  * installed, a tile the player deleted is not put back (PANEL_APP_DONE). */
+/* The panel app of the last upstream release that ships it: a build of another version
+ * (a fork's) has no release of its own to download it from. */
+#define PANEL_APP_RELEASE "0.7.4-fix"
 #define PANEL_APP_URL "https://github.com/Vld439/PS4Mount-PS4/releases/download/v%s/ps4mount-panel.pkg"
 #define PANEL_APP_DONE STATE_DIR "/panel-app"
 #define PANEL_APP_DELAY 15 /* seconds after the start: the network is up by then */
@@ -5311,7 +5653,7 @@ static void *panel_app_fetch(void *arg) {
     (void)arg;
     char url[2048], err[192] = "";
     const char *part = INSTALL_DIR "/ps4mount-panel.part", *pkg = INSTALL_DIR "/ps4mount-panel.pkg";
-    snprintf(url, sizeof(url), PANEL_APP_URL, &VERSION[sizeof("PS4Mount ") - 1]);
+    snprintf(url, sizeof(url), PANEL_APP_URL, PANEL_APP_RELEASE);
     mkdir(INSTALL_DIR, 0777);
     FILE *f = fopen(part, "wb");
     int status = 0;
@@ -5398,24 +5740,28 @@ int app_upload(int fd, const char *query, const void *pre, size_t pre_len, uint6
     }
     int install = !strcmp(inst, "1");
     if (upload_clean_name(raw, name, sizeof(name))) {
-        snprintf(msg, cap, "%s", TR("no file name", "falta el nombre del archivo"));
+        snprintf(msg, cap, "%s", TR("no file name", "falta el nombre del archivo", "dosya adı yok"));
         return -1;
     }
     if (install)
         snprintf(dir, sizeof(dir), "%s", INSTALL_DIR); /* on the console: installed from there */
     else if (upload_dir(dest, dir, sizeof(dir))) {
-        snprintf(msg, cap, TR("%s is not available", "%s no está disponible"), dest[0] ? dest : TR("the destination", "el destino"));
+        snprintf(msg, cap, TR("%s is not available", "%s no está disponible", "%s kullanılamıyor"), dest[0] ? dest : TR("the destination", "el destino", "hedef"));
         return -1;
     }
     mkdirs(dir, 0777);
     uint64_t fb = free_bytes(dir), margin = 64ull << 20;
+    if (!strncmp(dir, "/data/", 6) || !strncmp(dir, "/user/", 6)) /* the console: the space the settings keep free */
+        margin += internal_reserve();
     if (fb < length + margin) {
-        snprintf(msg, cap, TR("not enough space in %s: %llu MB free, %llu MB needed", "no hay espacio en %s: %llu MB libres, %llu MB necesarios"), dir,
+        snprintf(msg, cap, TR("not enough space in %s: %llu MB free, %llu MB needed", "no hay espacio en %s: %llu MB libres, %llu MB necesarios",
+                              "%s içinde yeterli yer yok: %llu MB boş, %llu MB gerekli"), dir,
                  (unsigned long long)(fb >> 20), (unsigned long long)((length + margin) >> 20));
         return -1;
     }
     if (upload_start(fd, dir, name, length, pre, pre_len, g_fw, install, install ? upload_install_done : upload_done)) {
-        snprintf(msg, cap, "%s", TR("another pkg is being received: wait for it to finish", "ya se está recibiendo otro pkg: espera a que termine"));
+        snprintf(msg, cap, "%s", TR("another pkg is being received: wait for it to finish", "ya se está recibiendo otro pkg: espera a que termine",
+                                    "başka bir pkg alınıyor: bitmesini bekle"));
         return -1;
     }
     return 0;
@@ -5587,7 +5933,7 @@ static void drive_begin(void) {
 static int links_check(const char *path, uint64_t size, char *problem, size_t n) {
     pkg_check_t c;
     if (pkg_check(path, g_fw, &c)) {
-        snprintf(problem, n, "%s", TR("not a PS4 pkg", "no es un pkg de PS4"));
+        snprintf(problem, n, "%s", TR("not a PS4 pkg", "no es un pkg de PS4", "PS4 pkg'si değil"));
         return -1;
     }
     check_problem(&c, size, problem, n);
@@ -5654,7 +6000,7 @@ __attribute__((unused)) static void install_panel_shortcut(void) {
     rc = register_call(PANEL_ID);
     printf("[panel] shortcut install rc=0x%08x\n", rc);
     if (!rc)
-        notify("%s", TR("PS4Mount added to the Media tab", "PS4Mount añadido a la pestaña Multimedia"));
+        notify("%s", TR("PS4Mount added to the Media tab", "PS4Mount añadido a la pestaña Multimedia", "PS4Mount Medya sekmesine eklendi"));
 }
 
 static int g_klog = -1, g_web = -1;
@@ -5937,7 +6283,8 @@ int app_nas_reload(char *msg, size_t cap) {
     const char *file = payload_file();
     if (!file) {
         snprintf(msg, cap, "%s", TR("the payload is not where the panel expects it",
-                                    "el payload no está donde el panel lo espera"));
+                                    "el payload no está donde el panel lo espera",
+                                    "payload panelin beklediği yerde değil"));
         return 1;
     }
     char buf[32];
@@ -5952,12 +6299,14 @@ int app_nas_reload(char *msg, size_t cap) {
         unlink(NAS_WAIT);
         snprintf(msg, cap, "%s", where == 1
                      ? TR("BinLoader is not listening on port 9090",
-                          "BinLoader no está escuchando en el puerto 9090")
-                     : TR("BinLoader turned the load down", "BinLoader rechazó la carga"));
+                          "BinLoader no está escuchando en el puerto 9090",
+                          "BinLoader 9090 portunu dinlemiyor")
+                     : TR("BinLoader turned the load down", "BinLoader rechazó la carga", "BinLoader yüklemeyi reddetti"));
         return 1;
     }
     snprintf(msg, cap, "%s", TR("BinLoader took the payload: loading it again",
-                                "BinLoader aceptó el payload: cargándolo otra vez"));
+                                "BinLoader aceptó el payload: cargándolo otra vez",
+                                "BinLoader payload'ı aldı: yeniden yükleniyor"));
     return 0;
 }
 
@@ -6168,7 +6517,7 @@ static const char *panel_url(char *out, size_t n) {
     if (lan_ip(&ip) && inet_ntop(AF_INET, &ip, t, sizeof(t)))
         snprintf(out, n, "http://%s:%d", t, WEB_PORT);
     else
-        snprintf(out, n, "%s", TR("http://<PS4 IP>:8770", "http://<IP de la PS4>:8770"));
+        snprintf(out, n, "%s", TR("http://<PS4 IP>:8770", "http://<IP de la PS4>:8770", "http://<PS4 IP>:8770"));
     return out;
 }
 
@@ -6179,20 +6528,24 @@ static void notify_running(void) {
         notify(TR(VERSION ": first start. Choose the settings in the panel (%s) and press Save. Without it, the games "
                           "are added with the default settings in 2 minutes.",
                   VERSION ": primera vez. Elige los ajustes en el panel (%s) y pulsa Guardar. Si no, en 2 minutos se "
-                          "añaden los juegos con los ajustes por defecto."),
+                          "añaden los juegos con los ajustes por defecto.",
+                  VERSION ": ilk açılış. Paneldeki ayarları seç (%s) ve Kaydet'e bas. Bunu yapmazsan oyunlar 2 dakika sonra varsayılan ayarlarla eklenir."),
                panel_url(url, sizeof(url)));
     else if (g_reg_mode == REG_ALL && g_web >= 0)
-        notify(TR(VERSION " running. Panel at %s", VERSION " en marcha. Panel en %s"), panel_url(url, sizeof(url)));
+        notify(TR(VERSION " running. Panel at %s", VERSION " en marcha. Panel en %s", VERSION " çalışıyor. Panel: %s"), panel_url(url, sizeof(url)));
     else if (g_reg_mode == REG_ALL)
-        notify("%s", TR(VERSION " running (panel unavailable)", VERSION " en marcha (panel no disponible)"));
+        notify("%s", TR(VERSION " running (panel unavailable)", VERSION " en marcha (panel no disponible)",
+                        VERSION " çalışıyor (panel kullanılamıyor)"));
     else if (g_reg_mode == REG_TITLEDIR)
         notify(TR(VERSION " running (firmware %s: games are added one at a time). Panel at %s",
-                  VERSION " en marcha (firmware %s: los juegos se añaden de uno en uno). Panel en %s"),
+                  VERSION " en marcha (firmware %s: los juegos se añaden de uno en uno). Panel en %s",
+                  VERSION " çalışıyor (yazılım %s: oyunlar tek tek eklenir). Panel: %s"),
                g_fw_text, panel_url(url, sizeof(url)));
     else
         notify(TR(VERSION ": firmware %s is not supported yet. To protect the system database, no games are added.",
                   VERSION ": el firmware %s aún no es compatible. Para proteger la base de datos del sistema, no se "
-                          "añaden juegos."),
+                          "añaden juegos.",
+                  VERSION ": %s yazılım sürümü henüz desteklenmiyor. Sistem veritabanını korumak için oyun eklenmiyor."),
                g_fw_text);
 }
 
@@ -6208,7 +6561,7 @@ int main(void) {
         apply_lang(); /* the settings are the running one's: the console's language */
         printf("[main] already running: this load ends here\n");
         char url[48];
-        notify(TR(VERSION " is already running. Panel at %s", VERSION " ya está en marcha. Panel en %s"),
+        notify(TR(VERSION " is already running. Panel at %s", VERSION " ya está en marcha. Panel en %s", VERSION " zaten çalışıyor. Panel: %s"),
                panel_url(url, sizeof(url)));
         log_stop();
         return 0;
@@ -6224,6 +6577,9 @@ int main(void) {
     g_setup_start = time(NULL);
     config_load();
     apply_lang();
+    saves_pump = saves_pump_events;
+    saves_open = saves_game_open;
+    g_saves_next = time(NULL) + 90; /* after the first scan has the library */
     if (g_setup)
         printf("[main] first start: no game is added until the settings are saved\n");
     signal(SIGPIPE, SIG_IGN);
@@ -6242,7 +6598,7 @@ int main(void) {
     for (;;) {
         if (g_stop || exists(STATE_DIR "/stop")) {
             unlink(STATE_DIR "/stop");
-            notify("%s", TR(VERSION " stopped", VERSION " detenido"));
+            notify("%s", TR(VERSION " stopped", VERSION " detenido", VERSION " durduruldu"));
             shutdown_daemon(lock);
             return 0;
         }
@@ -6250,7 +6606,8 @@ int main(void) {
             /* lost in rest mode: take it again, or stop if another PS4Mount has it now */
             close(lock);
             if ((lock = single_instance()) < 0) {
-                notify("%s", TR(VERSION " stopped: another PS4Mount is running", VERSION " detenido: hay otro PS4Mount en marcha"));
+                notify("%s", TR(VERSION " stopped: another PS4Mount is running", VERSION " detenido: hay otro PS4Mount en marcha",
+                                VERSION " durduruldu: başka bir PS4Mount çalışıyor"));
                 shutdown_daemon(-1);
                 return 0;
             }
@@ -6310,7 +6667,8 @@ int main(void) {
             if (g_setup) {
                 if (g_manual_scan)
                     notify("%s", TR("Save the settings in the panel first: no game is added until then",
-                                    "Guarda primero los ajustes en el panel: hasta entonces no se añade ningún juego"));
+                                    "Guarda primero los ajustes en el panel: hasta entonces no se añade ningún juego",
+                                    "Önce paneldeki ayarları kaydet: o zamana kadar hiçbir oyun eklenmez"));
             } else if (g_reg_mode != REG_NONE) {
                 migrate_organized(); /* organize off: the games it had organized, back in place */
                 scan_all();
@@ -6323,17 +6681,19 @@ int main(void) {
                     for (int i = 0; i < MAX_TITLES; i++)
                         playable += g_managed[i].used && !needs_reboot(g_managed[i].tid);
                     if (playable)
-                        notify(TR("%d game(s) ready to play", "%d juego(s) listo(s) para jugar"), playable);
+                        notify(TR("%d game(s) ready to play", "%d juego(s) listo(s) para jugar", "%d oyun oynamaya hazır"), playable);
                 }
             } else if (g_manual_scan)
                 notify(TR("Firmware %s is not supported yet: no games are added",
-                          "El firmware %s aún no es compatible: no se añaden juegos"),
+                          "El firmware %s aún no es compatible: no se añaden juegos",
+                          "%s yazılım sürümü henüz desteklenmiyor: oyun eklenmiyor"),
                        g_fw_text);
             g_manual_scan = 0;
             g_next_scan = time(NULL) + SCAN_SECONDS;
             install_cleanup();
             dlc_pending_check();
         }
+        saves_tick();
         keep_awake();
         pump_events(1000);
     }

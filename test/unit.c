@@ -466,9 +466,15 @@ static void test_lang(void) {
     g_lang = LANG_COUNT;                                 /* one with no column anywhere */
     CHECK(!strcmp(TR("Yes", "Sí"), "Yes"));
     g_lang = LANG_EN;
+    g_lang = LANG_TR;
+    CHECK(!strcmp(TR("Yes", "Sí", "Evet"), "Evet"));
+    CHECK(!strcmp(TR("Yes", "Sí"), "Yes")); /* a text without Turkish: English */
+    g_lang = LANG_EN;
     CHECK(lang_from_console(3) == LANG_ES && lang_from_console(20) == LANG_ES);
+    CHECK(lang_from_console(19) == LANG_TR);
     CHECK(lang_from_console(1) == LANG_EN && lang_from_console(7) == LANG_EN && lang_from_console(-1) == LANG_EN);
     CHECK(lang_from_tag("es") == LANG_ES && lang_from_tag("en") == LANG_EN && lang_from_tag("auto") == -1);
+    CHECK(lang_from_tag("tr") == LANG_TR && !strcmp(lang_tag(LANG_TR), "tr"));
     CHECK(!strcmp(lang_tag(LANG_ES), "es") && !strcmp(lang_tag(-1), "en"));
 }
 

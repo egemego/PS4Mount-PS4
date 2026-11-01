@@ -50,7 +50,8 @@ int pkg_check(const char *path, uint32_t fw, pkg_check_t *out) {
     if (!have_sfo) {
         mem_free(sfo);
         snprintf(out->problem, sizeof(out->problem), "%s",
-                 TR("param.sfo cannot be read: the pkg is damaged", "no se puede leer param.sfo: el pkg está dañado"));
+                 TR("param.sfo cannot be read: the pkg is damaged", "no se puede leer param.sfo: el pkg está dañado",
+                    "param.sfo okunamıyor: pkg bozuk"));
         return 0;
     }
     char cat[8];
@@ -69,19 +70,22 @@ int pkg_check(const char *path, uint32_t fw, pkg_check_t *out) {
     if (out->kind == PKG_KIND_OTHER)
         snprintf(out->problem, sizeof(out->problem),
                  TR("not a game, an update or an add-on (category \"%s\")",
-                    "no es un juego, una actualización ni un DLC (categoría \"%s\")"),
+                    "no es un juego, una actualización ni un DLC (categoría \"%s\")",
+                    "oyun, güncelleme ya da DLC değil (kategori \"%s\")"),
                  cat);
     else if (!is_game_id(out->title_id))
         snprintf(out->problem, sizeof(out->problem),
-                 TR("%s is a system app, not a game", "%s es una app del sistema, no un juego"), out->title_id);
+                 TR("%s is a system app, not a game", "%s es una app del sistema, no un juego", "%s bir sistem uygulaması, oyun değil"), out->title_id);
     else if (out->kind == PKG_KIND_GAME && homebrew_small(out->title_id, out->pkg_size) && (out->installable = out->fake))
         snprintf(out->problem, sizeof(out->problem),
                  TR("%s is a homebrew app (under 1 GB): install it the usual way; homebrew ports, which are bigger, are played from the pkg",
-                    "%s es una app homebrew (menos de 1 GB): instálala de la forma normal; los ports homebrew, más grandes, se juegan desde el pkg"),
+                    "%s es una app homebrew (menos de 1 GB): instálala de la forma normal; los ports homebrew, más grandes, se juegan desde el pkg",
+                    "%s bir homebrew uygulaması (1 GB altı): normal yolla kur; daha büyük olan homebrew portları pkg'den oynanır"),
                  out->title_id);
     else if (!out->fake)
         snprintf(out->problem, sizeof(out->problem), "%s",
-                 TR("not a fake pkg: only fake pkgs can be used", "no es un pkg fake: solo se pueden usar pkgs fake"));
+                 TR("not a fake pkg: only fake pkgs can be used", "no es un pkg fake: solo se pueden usar pkgs fake",
+                    "fake pkg değil: yalnızca fake pkg'ler kullanılabilir"));
     out->ok = !out->problem[0];
     /* not refused: a backport (an update or a patched eboot) makes it run, and the usual
      * installers do not look at SYSTEM_VER either */
@@ -91,7 +95,8 @@ int pkg_check(const char *path, uint32_t fw, pkg_check_t *out) {
         ver_text(fw, have, sizeof(have));
         snprintf(out->warning, sizeof(out->warning),
                  TR("built for firmware %s (this console has %s): it only runs with a backport",
-                    "hecho para el firmware %s (esta consola tiene %s): solo funciona con un backport"),
+                    "hecho para el firmware %s (esta consola tiene %s): solo funciona con un backport",
+                    "%s yazılım sürümü için yapılmış (bu konsolda %s var): yalnızca backport ile çalışır"),
                  need, have);
     }
     return 0;

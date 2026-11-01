@@ -172,6 +172,20 @@ static int dest_param(const char *path, char *dest, size_t n) {
     return o ? 0 : -1;
 }
 
+/* key=<letters, digits and -> of a query (a user folder, a copy's name). 0 when present. */
+static int word_param(const char *path, const char *key, char *out, size_t n) {
+    const char *p = strchr(path, '?');
+    size_t kl = strlen(key), o = 0;
+    while (p && (strncmp(p + 1, key, kl) || p[1 + kl] != '='))
+        p = strchr(p + 1, '&');
+    if (!p)
+        return -1;
+    for (p += kl + 2; ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '-') && o + 1 < n; p++)
+        out[o++] = *p;
+    out[o] = 0;
+    return o ? 0 : -1;
+}
+
 /* The form field key of body, decoded (+ and %XX) into out. 0 when present. */
 static int form_field(const char *body, const char *key, char *out, size_t n) {
     size_t kl = strlen(key), o = 0;
@@ -215,14 +229,15 @@ static void drive_action(int fd, const char *path, const char *body) {
     else if (IS("disconnect"))
         rc = drive_disconnect(msg, sizeof(msg));
     else if (IS("upload"))
-        rc = strstr(path, "title_id=") && !has_tid ? (snprintf(msg, sizeof(msg), "%s", TR("invalid title_id", "title_id no válido")), -1)
+        rc = strstr(path, "title_id=") && !has_tid ? (snprintf(msg, sizeof(msg), "%s", TR("invalid title_id", "title_id no válido",
+                                                                                          "geçersiz title_id")), -1)
                                                    : drive_upload(has_tid ? tid : NULL, msg, sizeof(msg));
     else if (IS("download"))
         rc = !has_tid || dest_param(path, dest, sizeof(dest))
-                 ? (snprintf(msg, sizeof(msg), "%s", TR("invalid title_id or dest", "title_id o dest no válidos")), -1)
+                 ? (snprintf(msg, sizeof(msg), "%s", TR("invalid title_id or dest", "title_id o dest no válidos", "geçersiz title_id ya da dest")), -1)
                  : drive_download(tid, dest, msg, sizeof(msg));
     else if (IS("trash"))
-        rc = !has_tid ? (snprintf(msg, sizeof(msg), "%s", TR("invalid title_id", "title_id no válido")), -1)
+        rc = !has_tid ? (snprintf(msg, sizeof(msg), "%s", TR("invalid title_id", "title_id no válido", "geçersiz title_id")), -1)
                       : drive_trash(tid, msg, sizeof(msg));
     else if (IS("refresh"))
         rc = drive_refresh(msg, sizeof(msg));
@@ -281,11 +296,11 @@ static void links_action(int fd, const char *req, const char *path, const char *
         uint8_t *data = NULL;
         char *text = NULL;
         if (dest_param(path, dest, sizeof(dest)))
-            rc = (snprintf(msg, sizeof(msg), "%s", TR("choose where to save it", "elige dónde guardarlo")), -1);
+            rc = (snprintf(msg, sizeof(msg), "%s", TR("choose where to save it", "elige dónde guardarlo", "nereye kaydedileceğini seç")), -1);
         else if (!length || length > LINKS_TEXT_MAX)
-            rc = (snprintf(msg, sizeof(msg), "%s", TR("paste at least one link", "pega al menos un enlace")), -1);
+            rc = (snprintf(msg, sizeof(msg), "%s", TR("paste at least one link", "pega al menos un enlace", "en az bir bağlantı yapıştır")), -1);
         else if (!(data = read_body(fd, body, have, (size_t)length)) || !(text = mem_alloc((size_t)length + 1)))
-            rc = (snprintf(msg, sizeof(msg), "%s", TR("the links did not arrive whole", "los enlaces no llegaron enteros")), -1);
+            rc = (snprintf(msg, sizeof(msg), "%s", TR("the links did not arrive whole", "los enlaces no llegaron enteros", "bağlantılar eksik geldi")), -1);
         else {
             memcpy(text, data, (size_t)length);
             text[length] = 0;
@@ -346,7 +361,7 @@ void web_handle(int fd) {
         body = strstr(req, "\r\n\r\n");
     }
     body = body ? body + 4 : req + n;
-    char method[8] = "", path[1024] = "", tid[10], msg[256];
+    char method[8] = "", path[1024] = "", tid[10], msg[512];
     sscanf(req, "%7s %1023s", method, path);
     int post = !strcmp(method, "POST");
 
@@ -371,21 +386,22 @@ void web_handle(int fd) {
         buf_free(&b);
     } else if (post && !strncmp(path, "/api/mount", 10)) {
         if (title_param(path, tid))
-            json_msg(fd, 0, TR("invalid title_id", "title_id no válido"));
+            json_msg(fd, 0, TR("invalid title_id", "title_id no válido", "geçersiz title_id"));
         else {
             int rc = app_add(tid, msg, sizeof(msg));
             json_msg(fd, !rc, msg);
         }
     } else if (post && !strncmp(path, "/api/unmount", 12)) {
         if (title_param(path, tid))
-            json_msg(fd, 0, TR("invalid title_id", "title_id no válido"));
+            json_msg(fd, 0, TR("invalid title_id", "title_id no válido", "geçersiz title_id"));
         else {
             int rc = app_remove(tid, msg, sizeof(msg));
             json_msg(fd, !rc, msg);
         }
     } else if (post && !strcmp(path, "/api/rescan")) {
         app_rescan_hard();
-        json_msg(fd, 1, TR("Looking for games on the drives and the share", "Buscando juegos en los discos y el NAS"));
+        json_msg(fd, 1, TR("Looking for games on the drives and the share", "Buscando juegos en los discos y el NAS",
+                           "Sürücülerde ve paylaşımda oyun aranıyor"));
     } else if (post && !strncmp(path, "/api/restore", 12) && (path[12] == 0 || path[12] == '?')) {
         /* ?title_id=<one game>, body title_ids=<games, comma separated>, or neither for all */
         int rc;
@@ -425,9 +441,10 @@ void web_handle(int fd) {
         if (!may_write(fd, req))
             reply(fd, "403 Forbidden", "text/plain", "forbidden\n", 10);
         else if (!length || length > CHECK_MAX)
-            json_msg(fd, 0, TR("send the first MB of the pkg (at most 16 MB)", "envía el primer MB del pkg (como máximo 16 MB)"));
+            json_msg(fd, 0, TR("send the first MB of the pkg (at most 16 MB)", "envía el primer MB del pkg (como máximo 16 MB)",
+                               "pkg'nin ilk MB'ını gönder (en fazla 16 MB)"));
         else if (!(data = read_body(fd, body, (size_t)(req + n - body), (size_t)length)))
-            json_msg(fd, 0, TR("the pkg start did not arrive whole", "el comienzo del pkg no llegó entero"));
+            json_msg(fd, 0, TR("the pkg start did not arrive whole", "el comienzo del pkg no llegó entero", "pkg'nin başı eksik geldi"));
         else {
             buf_t b = {0};
             app_check(data, (size_t)length, sz ? strtoull(sz + 5, NULL, 10) : 0, &b);
@@ -439,7 +456,7 @@ void web_handle(int fd) {
         if (!may_write(fd, req))
             reply(fd, "403 Forbidden", "text/plain", "forbidden\n", 10);
         else if (!length)
-            json_msg(fd, 0, TR("nothing was sent", "no se envió nada"));
+            json_msg(fd, 0, TR("nothing was sent", "no se envió nada", "hiçbir şey gönderilmedi"));
         else if (!app_upload(fd, path, body, (size_t)(req + n - body), length, msg, sizeof(msg)))
             return; /* the upload answers and closes it */
         else
@@ -476,6 +493,33 @@ void web_handle(int fd) {
             reply(fd, "403 Forbidden", "text/plain", "forbidden\n", 10);
         else
             links_action(fd, req, path, body, (size_t)(req + n - body), length);
+    } else if (!post && !strncmp(path, "/api/saves", 10) && (path[10] == 0 || path[10] == '?')) {
+        if (title_param(path, tid))
+            json_msg(fd, 0, TR("invalid title_id", "title_id no válido", "geçersiz title_id"));
+        else {
+            buf_t b = {0};
+            app_saves_json(tid, &b);
+            reply(fd, "200 OK", "application/json; charset=utf-8", b.data, b.len);
+            buf_free(&b);
+        }
+    } else if (post && !strncmp(path, "/api/saves/", 11)) {
+        /* they write the console's saves and the drive: the panel's own requests only */
+        char user[16], stamp[48];
+        int rc = -1;
+        if (!may_write(fd, req))
+            reply(fd, "403 Forbidden", "text/plain", "forbidden\n", 10);
+        else {
+            if (title_param(path, tid))
+                snprintf(msg, sizeof(msg), "%s", TR("invalid title_id", "title_id no válido", "geçersiz title_id"));
+            else if (post && !strncmp(path + 11, "backup?", 7))
+                rc = app_saves_backup(tid, msg, sizeof(msg));
+            else if (post && !strncmp(path + 11, "restore?", 8) && !word_param(path, "user", user, sizeof(user)) &&
+                     !word_param(path, "stamp", stamp, sizeof(stamp)))
+                rc = app_saves_restore(tid, user, stamp, msg, sizeof(msg));
+            else
+                snprintf(msg, sizeof(msg), "unknown saves action");
+            json_msg(fd, !rc, msg);
+        }
     } else if (!strcmp(path, "/api/log")) {
         send_log(fd);
     } else if ((!strcmp(path, "/api/nas/scan") || (post && !strcmp(path, "/api/nas/shares"))) && !may_write(fd, req)) {

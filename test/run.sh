@@ -91,6 +91,10 @@ echo "== pkgs sent from the panel"
 $CC $FLAGS -Itest -o "$B/upload_test" test/upload_test.c src/upload.c src/lang.c src/mem.c src/check.c src/pkg.c src/build.c src/crypto.c -lpthread
 "$B/upload_test"
 
+echo "== copies of saves"
+$CC $FLAGS -o "$B/saves_test" test/saves_test.c src/saves.c src/lang.c src/mem.c
+"$B/saves_test"
+
 echo "== log with times"
 $CC $FLAGS -o "$B/log_test" test/log_test.c src/logts.c -lpthread
 "$B/log_test"

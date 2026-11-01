@@ -18,7 +18,12 @@ let GAMES_VERSION = 'PS4Mount test';
 let DRIVE = { configured: false }; // GET /api/drive (an object: the tests change it)
 let LINKS = { configured: false }; // GET /api/links
 const DESTS = { dests: [{ id: 'usb0', label: 'usb0', folder: '/mnt/usb0/PS4Mount', free: 5e11, fits: true }] };
+// GET /api/saves: a game's saves on the console and its copies on the USB drive
+const SAVES = { enabled: true, open: false, busy: false, users: 1, bytes: 4194304, copied: true, drive: 'usb0', keep: 10,
+  copies: [{ user: '1eb71bbd', stamp: '20261101-231500', bytes: 4194304, files: 2, before_restore: false },
+    { user: '1eb71bbd', stamp: '20261101-201000-before-restore', bytes: 4194304, files: 2, before_restore: true }] };
 function reply(url) {
+  if (url.indexOf('/api/saves?') === 0) return SAVES;
   if (url === '/api/drive') return DRIVE;
   if (url === '/api/links') return LINKS;
   if (url === '/api/dests') return DESTS;
@@ -96,10 +101,19 @@ function tKeys(file) {
     const { keys, built } = tKeys(f);
     const missing = keys.filter((k) => !L.es[k]);
     ok(keys.length > 20 && !missing.length, f + ': every t() text has a Spanish one' + (missing.length ? ': ' + JSON.stringify(missing) : ''));
+    const noTr = keys.filter((k) => !L.tr[k]);
+    ok(!noTr.length, f + ': every t() text has a Turkish one' + (noTr.length ? ': ' + JSON.stringify(noTr) : ''));
     ok(built.every((c) => /^t\(labels\[/.test(c) || /^t\(c\.kind\)/.test(c)), f + ': t() of a computed text only for states and pkg kinds: ' + built.join(' '));
   });
   ['Ready', 'Restart to play', 'Running', 'Not in library', 'Installed on console', 'Adding', 'On another drive', 'Drive not connected',
     'game', 'update', 'add-on', 'other'].forEach((k) => ok(!!L.es[k], 'Spanish for "' + k + '"'));
+  { const noTr = Object.keys(L.es).filter((k) => !L.tr[k]), extra = Object.keys(L.tr).filter((k) => !L.es[k]);
+    ok(!noTr.length && !extra.length, 'the Turkish table has every text of the Spanish one, and no other' +
+      (noTr.length || extra.length ? ': ' + JSON.stringify(noTr.concat(extra)) : '')); }
+  Object.keys(L.tr).forEach((k) => {
+    const set = (x) => [...new Set(x.match(/\{\d\}/g) || [])].sort().join();
+    if (set(k) !== set(L.tr[k])) ok(false, 'same placeholders in the Turkish translation of "' + k + '"');
+  });
   Object.keys(L.es).forEach((k) => {
     // the same ones; a translation may use one twice ("de {0} en {0}")
     const set = (x) => [...new Set(x.match(/\{\d\}/g) || [])].sort().join(), a = set(k), b = set(L.es[k]);
@@ -151,6 +165,27 @@ function tKeys(file) {
   ok(d.querySelector('#g-actions [data-a="restore"]') === null, 'not for a game installed on the console');
   w.showGame('CUSA41712');
   ok(d.querySelector('#g-actions [data-a="restore"]') === null, 'not for a game used where it is: there are no original files');
+  // the saves: copies on the USB drive, on a game's page
+  w.showGame('CUSA34284'); await tick();
+  { const s = d.getElementById('g-saves');
+    ok(s.textContent.includes('On the console: 1 user(s), 4 MB') && s.textContent.includes('2026-11-01 23:15:00') &&
+      s.textContent.includes('Copies on usb0'), 'a game page lists the copies of its saves');
+    ok(s.querySelectorAll('button[data-s="restore"]').length === 2 && s.textContent.includes('(before a restore)'), 'each copy can be put back');
+    reqs.length = 0;
+    s.querySelector('button[data-s="restore"]').click(); await tick();
+    const r = reqs.find((x) => x.url.indexOf('/api/saves/restore') === 0);
+    ok(r && r.method === 'POST' && r.headers['X-PS4Mount'] === '1' &&
+      r.url === '/api/saves/restore?title_id=CUSA34284&user=1eb71bbd&stamp=20261101-231500', 'putting one back asks the console, with the panel header');
+    w.__confirm = false; reqs.length = 0;
+    s.querySelector('button[data-s="restore"]').click(); await tick();
+    ok(!reqs.some((x) => x.url.indexOf('/api/saves/restore') === 0), 'not without a yes');
+    w.__confirm = undefined; reqs.length = 0;
+    s.querySelector('button[data-s="backup"]').click(); await tick();
+    ok(reqs.some((x) => x.url === '/api/saves/backup?title_id=CUSA34284' && x.method === 'POST' && x.headers['X-PS4Mount'] === '1'), 'copy the saves now'); }
+  SAVES.open = true; w.showGame('CUSA34284'); await tick();
+  ok(d.querySelector('#g-saves button[data-s="backup"]').disabled &&
+    [...d.querySelectorAll('#g-saves button[data-s="restore"]')].every((b) => b.disabled), 'nothing is copied or put back while the game is open');
+  SAVES.open = false;
   d.getElementById('gamedlg').removeAttribute('open');
   d.getElementById('settingsbtn').click(); await tick();
   ok(d.getElementById('setdlg').hasAttribute('open') && d.getElementById('s-rsize').value === '5', 'settings open with restore group 5');
@@ -195,6 +230,14 @@ function tKeys(file) {
   reqs.length = 0; rs.value = '7';
   d.getElementById('setform').dispatchEvent(new w.Event('submit', { cancelable: true })); await tick();
   ok(reqs[0] && reqs[0].url === '/api/config' && reqs[0].body.includes('restore_batch=7'), 'Save sends restore_batch');
+  ok(reqs[0] && /(^|&)saves=1(&|$)/.test(reqs[0].body) && /(^|&)saves_keep=10(&|$)/.test(reqs[0].body) &&
+    /(^|&)reserve_gb=2(&|$)/.test(reqs[0].body), 'and the saves copies and the space kept free (their defaults)');
+  { const rv = d.getElementById('s-reserve');
+    rv.value = '300'; rv.dispatchEvent(new w.Event('input')); ok(rv.value === '200', 'space kept free capped to 200 GB');
+    const kv = d.getElementById('s-savekeep');
+    kv.value = '0'; reqs.length = 0; d.getElementById('setform').dispatchEvent(new w.Event('submit', { cancelable: true })); await tick();
+    ok(!reqs.length && d.getElementById('toast').textContent.includes('1 to 50'), 'no copies kept: refused');
+    kv.value = '10'; rv.value = '2'; }
 
   // --- sending pkgs: checked first, only usable ones sent, to the chosen place
   p = page('index.html', { dialog: true }); ({ w, d, reqs } = p);
@@ -490,6 +533,23 @@ function tKeys(file) {
   p = page('index.html', { dialog: true }); ({ w, d, reqs } = p);
   await tick();
   ok(d.getElementById('rescan').textContent === 'Scan for games', 'a language with no table: English');
+  // --- in Turkish: the console says "tr"
+  REPLY_LANG = 'tr';
+  p = page('index.html', { dialog: true }); ({ w, d, reqs } = p);
+  await tick();
+  ok(d.documentElement.lang === 'tr' && d.getElementById('rescan').textContent === 'Oyunları tara' &&
+    d.getElementById('settingsbtn').textContent === 'Ayarlar', 'fixed texts in Turkish');
+  ok(d.getElementById('q').placeholder === 'Oyun ya da CUSA ara', 'placeholders in Turkish');
+  { const c = [...d.querySelectorAll('.card')].find((x) => x.textContent.includes('Moving Out 2'));
+    ok(c && c.querySelector('.badge').textContent === 'Oynamak için yeniden başlat' && c.textContent.includes('konsolu bir kez yeniden başlat'), 'states and notes in Turkish'); }
+  ok(d.getElementById('summary').textContent.includes('6 oyun'), 'the summary in Turkish');
+  w.showGame('CUSA34284'); await tick();
+  ok(d.getElementById('g-saves').textContent.includes('Konsolda: 1 kullanıcı') && d.getElementById('g-saves').textContent.includes('Geri yükle'), 'the saves of a game in Turkish');
+  d.getElementById('settingsbtn').click(); await tick();
+  ok([...d.getElementById('s-lang').options].some((o) => o.value === 'tr'), 'Turkish can be chosen in the settings');
+  p = page('legacy.html', {}); ({ w, d, reqs } = p);
+  await tick();
+  ok(d.getElementById('rescan').textContent === 'Oyunları tara', 'the legacy page in Turkish');
   REPLY_LANG = 'es';
   p = page('legacy.html', {}); ({ w, d, reqs } = p);
   await tick();
@@ -506,6 +566,18 @@ function tKeys(file) {
       if (k && /[a-z]{3}/.test(k) && !n.psmEn && !/^(PS4Mount|Log|\.pkg)$/.test(k)) left.push(k);
     }
     ok(!left.length, f + ': every fixed text in Spanish' + (left.length ? ': ' + JSON.stringify(left) : ''));
+  });
+  ['index.html', 'legacy.html'].forEach((f) => {
+    const html = fs.readFileSync(W + f, 'utf8').replace(/<script>[\s\S]*?<\/script>/g, '')
+      .replace('<!--LANG-->', () => '<script>' + fs.readFileSync(W + 'lang.js', 'utf8') + '</script><script>setLang("tr")</script>');
+    const doc = new JSDOM(html, { runScripts: 'dangerously' }).window.document, walker = doc.createTreeWalker(doc.body, 4), left = [];
+    let n;
+    while ((n = walker.nextNode())) {
+      if (/^(SCRIPT|STYLE|PRE|TEXTAREA|OPTION)$/.test(n.parentNode.nodeName)) continue;
+      const k = n.nodeValue.replace(/\s+/g, ' ').trim();
+      if (k && /[a-z]{3}/.test(k) && !n.psmEn && !/^(PS4Mount|Log|\.pkg)$/.test(k)) left.push(k);
+    }
+    ok(!left.length, f + ': every fixed text in Turkish' + (left.length ? ': ' + JSON.stringify(left) : ''));
   });
   REPLY_LANG = undefined;
 

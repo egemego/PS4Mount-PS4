@@ -98,6 +98,9 @@ button.small{padding:5px 10px;font-size:13px}
 .quota{height:8px;background:#0b0d11;border-radius:99px;overflow:hidden;width:220px;border:1px solid var(--line)}
 .quota div{height:100%;background:var(--accent)}
 .b-drive{position:absolute;right:10px;top:10px;padding:3px 8px;border-radius:999px;font-size:12px;font-weight:600;background:#1a73e8}
+.saves{border-top:1px solid var(--line);margin-top:14px;padding-top:10px}
+.saves h4{margin:0 0 6px}
+.saves .picker td{vertical-align:middle}
 #toast{position:fixed;right:20px;bottom:20px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 16px;display:none;max-width:420px}
 /* last: over any display rule (form.settings is flex), also where !important or
  * specificity are not applied */
@@ -145,6 +148,20 @@ button.small{padding:5px 10px;font-size:13px}
   <label class="check"><input type="checkbox" id="s-dlcbig"> Also install big add-ons (over 256 MB)</label>
   <span class="hint" style="margin-top:-8px">A game only sees an add-on the system has installed: big ones are copied to the console's
     storage, in the background (a few minutes). Off, they are not used.</span>
+  <label>Keep free on the console (GB)
+    <input type="number" class="num" id="s-reserve" inputmode="numeric" pattern="[0-9]*" min="0" max="200">
+    <span class="hint">Add-ons and pkgs sent to the console's storage never take this space: what is left for saves and the
+      system. 0: no limit.</span>
+  </label>
+  <fieldset><legend>Saves</legend>
+    <label class="check"><input type="checkbox" id="s-saves"> Copy the saves to the USB drive after each session</label>
+    <span class="hint" style="margin-top:-8px">The games keep their saves on the console, where nothing can cut a save in half
+      (rest mode powers the USB drive off, and a drive can be pulled out). After a game closes, its saves are copied to
+      PS4Mount/saves on the USB drive when they changed; a game's page shows the copies and puts one back.</span>
+    <label>Copies kept per game and user
+      <input type="number" class="num" id="s-savekeep" inputmode="numeric" pattern="[0-9]*" min="1" max="50">
+    </label>
+  </fieldset>
   <label class="check"><input type="checkbox" id="s-organize"> Organize pkgs into the ps4 folder</label>
   <span class="hint" style="margin-top:-8px">On (the default): the .pkg files are moved into ps4/&lt;title ID&gt;/ on the drive, so the console's
     own installer does not find them again. Off: they are used where they are, anywhere on the drive, and are not renamed or moved.</span>
@@ -193,7 +210,7 @@ button.small{padding:5px 10px;font-size:13px}
     <span class="hint" id="nas-status"></span>
   </fieldset>
   <label>Language
-    <select id="s-lang"><option value="auto">The console's</option><option value="en">English</option><option value="es">Español</option></select>
+    <select id="s-lang"><option value="auto">The console's</option><option value="en">English</option><option value="es">Español</option><option value="tr">Türkçe</option></select>
   </label>
   <fieldset><legend>Restore original files</legend>
     <span class="hint">Takes games off the console and puts their pkgs (game, update and add-ons) back where they were, with the
@@ -243,6 +260,7 @@ button.small{padding:5px 10px;font-size:13px}
 <dialog id="gamedlg"><div class="hero" id="g-hero"><div class="icon" id="g-icon"></div></div>
 <h3 id="g-name"></h3><dl class="facts" id="g-facts"></dl>
 <div class="actions" id="g-actions" style="padding:0"></div>
+<div class="saves" id="g-saves"></div>
 <form method="dialog" style="display:flex;justify-content:flex-end;margin-top:10px"><button>Close</button></form></dialog>
 <dialog id="drivedlg"><h3>Google Drive</h3>
 <div id="d-off">
@@ -394,8 +412,59 @@ function showGame(tid) {
   $('g-facts').innerHTML = f.map(function (x) { return '<dt>' + esc(x[0]) + '</dt><dd>' + esc(x[1]) + '</dd>'; }).join('') +
     (g.state === 'restart' ? '<dt></dt><dd class="warn">' + t('Added. Restart the console once to play it.') + '</dd>' : '');
   $('g-actions').innerHTML = actions(g, true);
+  $('g-saves').innerHTML = '';
+  $('g-saves').setAttribute('data-t', tid);
+  loadSaves(tid);
   $('gamedlg').showModal();
 }
+/* --- saves: copies on the USB drive --- */
+function stampText(s) {
+  var m = /^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(\d\d)/.exec(s || '');
+  return m ? m[1] + '-' + m[2] + '-' + m[3] + ' ' + m[4] + ':' + m[5] + ':' + m[6] : String(s || '');
+}
+function savesPost(path) {
+  return fetch(path, {method: 'POST', cache: 'no-store', headers: {'X-PS4Mount': '1'}})
+    .then(function (r) { return r.json(); });
+}
+function loadSaves(tid) {
+  return api('/api/saves?title_id=' + tid).then(function (j) {
+    if ($('g-saves').getAttribute('data-t') !== tid) return; /* another game's page by now */
+    var copies = j.copies || [], html = '<h4>' + t('Saves') + '</h4>';
+    html += '<div class="meta">' + (j.users ? esc(t('On the console: {0} user(s), {1}', j.users, mb(j.bytes || 0))) +
+      (j.copied ? ' · ' + esc(t('copied')) : '') : esc(t('No saves of this game on the console yet'))) + '</div>';
+    if (!j.enabled) html += '<div class="meta">' + esc(t('Copies after each session are off (Settings → Saves).')) + '</div>';
+    if (!j.drive) html += '<div class="note">' + esc(t('No USB drive connected: copies go to one when it is.')) + '</div>';
+    html += '<div class="actions" style="padding:8px 0 0">' +
+      '<button type="button" data-s="backup"' + (j.open || j.busy || !j.users || !j.drive ? ' disabled' : '') + '>' +
+      esc(j.open ? t('Close the game to copy its saves') : t('Copy the saves now')) + '</button></div>';
+    if (copies.length) {
+      html += '<div class="meta">' + esc(t('Copies on {0} (newest first):', j.drive)) + '</div>' +
+        '<div class="pickwrap" style="max-height:30vh"><table class="picker"><tbody>' + copies.map(function (c) {
+          return '<tr><td>' + esc(stampText(c.stamp)) + (c.before_restore ? ' <span class="meta">' + esc(t('(before a restore)')) + '</span>' : '') +
+            '<div class="meta">' + esc(t('user {0}', c.user)) + ' · ' + esc(mb(c.bytes)) + '</div></td>' +
+            '<td style="text-align:right"><button type="button" class="small" data-s="restore" data-u="' + esc(c.user) +
+            '" data-st="' + esc(c.stamp) + '"' + (j.open || j.busy ? ' disabled' : '') + '>' + esc(t('Put back')) + '</button></td></tr>';
+        }).join('') + '</tbody></table></div>';
+    } else if (j.drive) html += '<div class="meta">' + esc(t('No copies on {0} yet.', j.drive)) + '</div>';
+    $('g-saves').innerHTML = html;
+  }).catch(function () { $('g-saves').innerHTML = ''; });
+}
+$('g-saves').addEventListener('click', function (e) {
+  var b = e.target.closest('button[data-s]'), tid = $('g-saves').getAttribute('data-t');
+  if (!b || !tid) return;
+  var path;
+  if (b.getAttribute('data-s') === 'backup') path = '/api/saves/backup?title_id=' + tid;
+  else {
+    if (!confirm(t('Put back the saves of {0} from {1}?\n\nThe saves the console has now are copied to the USB drive first, so this can be undone. The game must be closed.',
+        tid, stampText(b.getAttribute('data-st'))))) return;
+    path = '/api/saves/restore?title_id=' + tid + '&user=' + encodeURIComponent(b.getAttribute('data-u')) +
+      '&stamp=' + encodeURIComponent(b.getAttribute('data-st'));
+  }
+  b.disabled = true;
+  savesPost(path).then(function (j) { toast(j.message || j.error || ''); })
+    .catch(function (err) { toast(t('Error: {0}', err.message)); })
+    .then(function () { loadSaves(tid); });
+});
 $('summary').addEventListener('click', function (e) {
   var c = e.target.closest('span[data-f]');
   if (c) { filter = c.getAttribute('data-f'); render(); }
@@ -458,6 +527,9 @@ $('settingsbtn').onclick = function () {
     $('s-size').value = c.batch_size;
     $('s-dlc').checked = c.dlc;
     $('s-dlcbig').checked = c.dlc_big;
+    $('s-reserve').value = c.reserve_gb === undefined ? 2 : c.reserve_gb;
+    $('s-saves').checked = c.saves === undefined ? true : !!c.saves;
+    $('s-savekeep').value = c.saves_keep || 10;
     $('s-organize').checked = c.organize;
     $('s-internal').checked = c.internal;
     var nasOk = !!c.nas_supported;
@@ -598,6 +670,8 @@ function onlyDigits(el, max) {
 }
 onlyDigits($('s-size'), function () { return 50; });
 onlyDigits($('s-rsize'), function () { return maxRestore; });
+onlyDigits($('s-reserve'), function () { return 200; });
+onlyDigits($('s-savekeep'), function () { return 50; });
 $('s-restore').onclick = function () {
   var size = restoreSize();
   if (!size) return;
@@ -701,6 +775,9 @@ $('setform').onsubmit = function (e) {
   if (!restoreSize()) return;
   var size = $('s-size').value;
   if (!/^[0-9]+$/.test(size) || +size < 1 || +size > 50) { toast(t('Games per group must be a number from 1 to {0}', 50)); return; }
+  var reserve = $('s-reserve').value, keep = $('s-savekeep').value;
+  if (!/^[0-9]+$/.test(reserve) || +reserve > 200) { toast(t('The space kept free must be a number from 0 to {0} GB', 200)); return; }
+  if (!/^[0-9]+$/.test(keep) || +keep < 1 || +keep > 50) { toast(t('The copies kept must be a number from 1 to {0}', 50)); return; }
   var body = 'batch=' + ($('s-batch').checked ? 1 : 0) + '&batch_size=' + encodeURIComponent($('s-size').value) +
     '&dlc=' + ($('s-dlc').checked ? 1 : 0) + '&dlc_big=' + ($('s-dlcbig').checked ? 1 : 0) + '&organize=' + ($('s-organize').checked ? 1 : 0) + '&internal=' + ($('s-internal').checked ? 1 : 0) + '&restore_batch=' + $('s-rsize').value + '&lang=' + $('s-lang').value + '&paths=' + encodeURIComponent($('s-paths').value) +
     '&nas=' + ($('s-nas').checked ? 1 : 0) + '&nas_proto=' + $('s-nas-proto').value +
@@ -710,7 +787,8 @@ $('setform').onsubmit = function (e) {
     '&nas_share=' + encodeURIComponent($('s-nas-share').value.trim()) +
     '&nas_sub=' + encodeURIComponent($('s-nas-sub').value.trim()) +
     '&nas_user=' + encodeURIComponent($('s-nas-user').value.trim()) +
-    '&nas_pass=' + encodeURIComponent($('s-nas-pass').value);
+    '&nas_pass=' + encodeURIComponent($('s-nas-pass').value) +
+    '&reserve_gb=' + reserve + '&saves=' + ($('s-saves').checked ? 1 : 0) + '&saves_keep=' + keep;
   fetch('/api/config', {method: 'POST', cache: 'no-store', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: body})
     .then(function (r) { return r.json(); })
     .then(function (j) { toast(j.message || j.error); if (j.ok) { $('setdlg').close(); load(); } })
